@@ -15,7 +15,7 @@ import { applyTheme } from "../shared/theme";
 import type { Settings } from "../shared/types";
 
 /** 版本号：与 package.json 保持一致 */
-const APP_VERSION = "0.2.1";
+const APP_VERSION = "0.2.2";
 
 
 export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promise<void> {
