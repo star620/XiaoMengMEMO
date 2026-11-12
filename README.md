@@ -9,6 +9,8 @@
 ![Vite](https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=white)
 ![size](https://img.shields.io/badge/installer-3%20MB-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-2ea44f)
+[![CI](https://github.com/star620/XiaoMengMEMO/actions/workflows/ci.yml/badge.svg)](https://github.com/star620/XiaoMengMEMO/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/star620/XiaoMengMEMO?color=brightgreen)](https://github.com/star620/XiaoMengMEMO/releases/latest)
 
 ## 截图
 
@@ -116,6 +118,17 @@ tools/          图标生成、字体子集化、构建与调试脚本
 > 字体源文件不随仓库分发（25 MB）：只有重做字体子集时才需要把 LXGW 文楷的 `LXGWWenKai-Regular.ttf` 放到 `tools/fonts/`，生成好的 `public/fonts/xm-wenkai.woff2` 已提交，正常构建不需要它。
 
 > 如果 cargo 被系统代理卡住（`Failed to connect to index.crates.io over proxy`），先设 `$env:NO_PROXY='*'` 再构建。
+
+### 发布新版本
+
+版本号改在 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 三处，提交后打标签：
+
+```powershell
+git tag v0.2.2
+git push origin v0.2.2
+```
+
+`.github/workflows/release.yml` 会在 Windows 上编译、打出便携 exe 与安装包、生成 `SHA256SUMS.txt`，并自动发一个 Release。想先验证构建而不发版，去 Actions 里手动运行一次 Release 工作流即可（产物在 Artifacts 里）。
 
 ## 已知限制
 

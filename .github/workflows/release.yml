@@ -1,0 +1,88 @@
+name: Release
+
+# 打一个 v* 标签（例如 git tag v0.2.2 && git push origin v0.2.2）就会自动：
+#   1. 在 Windows 上编译 Rust + 前端
+#   2. 打出便携 exe 与 NSIS 安装包
+#   3. 生成 SHA256 校验文件
+#   4. 发布到 GitHub Releases
+# 也可以在 Actions 页面手动运行一次，只构建、不下发 Release（产物在 Artifacts 里）。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建（Windows x64）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建 exe 与安装包
+        run: npm run tauri build -- --bundles nsis
+
+      - name: 收集产物并计算 SHA256
+        shell: pwsh
+        run: |
+          $out = "dist-release"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "src-tauri/target/release/xiaomeng-memo.exe" "$out/xiaomeng-memo.exe" -Force
+          $setup = Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
+          Copy-Item $setup.FullName "$out/$($setup.Name)" -Force
+          Get-ChildItem $out -File | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "{0}  {1}" -f $hash, $_.Name
+          } | Set-Content "$out/SHA256SUMS.txt" -Encoding utf8
+          Get-ChildItem $out -File | Format-Table Name, Length
+          Get-Content "$out/SHA256SUMS.txt"
+
+      - name: 上传构建产物（手动运行也能下载）
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiaomeng-memo-windows-x64
+          path: dist-release/*
+          if-no-files-found: error
+
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: 小梦备忘录 ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: dist-release/*
+          body: |
+            ## 安装
+
+            1. 下载 **XiaoMengMemo_*_x64-setup.exe**，双击安装（按当前用户安装，不需要管理员权限）。
+            2. 首次运行时 Windows 可能弹出「已保护你的电脑」：点 **更多信息 → 仍要运行**。这是因为安装包没有商业代码签名证书，属于正常现象。
+            3. 装好后右下角托盘出现小图标，桌面出现第一张便签；按 `Ctrl + Alt + N` 随时在鼠标位置新建。
+
+            不想安装也可以用 **xiaomeng-memo.exe** 便携版，双击即用。
+
+            ## 校验
+
+            `SHA256SUMS.txt` 里是每个文件（签名后最终形态）的 SHA256，下载后可自行核对。
+
+            ## 数据在哪
+
+            所有便签都存在本机 `%APPDATA%\XiaoMengMemo\notes.json`，不上传任何地方；整个文件夹复制走就是一份备份。
