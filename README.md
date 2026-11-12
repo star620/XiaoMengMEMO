@@ -57,7 +57,7 @@
 
 ## 下载与安装
 
-1. 双击 `安装小梦备忘录.exe`（约 3 MB）。
+1. 到 [Releases](https://github.com/star620/XiaoMengMEMO/releases/latest) 下载 `XiaoMengMemo_x.y.z_x64-setup.exe`（约 3 MB），双击安装。每次发布都附 SHA256，可自行校验。
 2. 若 Windows 弹出「已保护你的电脑」：点「更多信息 → 仍要运行」。未签名程序首次运行都会提示，不是报错。
 3. 装完从开始菜单或桌面快捷方式启动；可勾选开机自启。
 
@@ -113,14 +113,20 @@ assets/         截图
 tools/          图标生成、字体子集化、构建与调试脚本
 ```
 
+> 字体源文件不随仓库分发（25 MB）：只有重做字体子集时才需要把 LXGW 文楷的 `LXGWWenKai-Regular.ttf` 放到 `tools/fonts/`，生成好的 `public/fonts/xm-wenkai.woff2` 已提交，正常构建不需要它。
+
 > 如果 cargo 被系统代理卡住（`Failed to connect to index.crates.io over proxy`），先设 `$env:NO_PROXY='*'` 再构建。
 
 ## 已知限制
 
-- **SmartScreen**：未做代码签名，首次运行会有提示（见安装步骤）。彻底消除需要购买证书。
+- **SmartScreen**：目前没有代码签名，首次运行会有提示（见安装步骤）。签名计划：申请 [SignPath Foundation](https://signpath.org/) 为开源项目提供的免费证书，过审后发布的安装包将自动签名（新证书的 SmartScreen 声誉也要靠下载量慢慢积累）。
 - **置顶有边界**：全屏游戏、UAC 弹窗、锁屏属于系统独占层，便签会被盖住。
 - **提醒需要程序在跑**：建议打开开机自启，平时只关窗口、不退出程序。
 - **多屏混合缩放**：不同缩放比的多显示器下，记住的位置可能略有偏差。
+
+## 反馈
+
+想法、bug、想加的功能都欢迎开 [Issue](https://github.com/star620/XiaoMengMEMO/issues)；提 PR 前请先跑通 `npm run build` 和 `cargo test`（CI 也会跑 `fmt` / `clippy`）。
 
 ## 许可
 
