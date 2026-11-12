@@ -1,0 +1,30 @@
+{
+  "name": "xiaomeng-memo",
+  "version": "0.2.1",
+  "description": "小梦备忘录：轻量 Windows 桌面便利贴（Tauri 2 + TypeScript），随手记、置顶看、到点提醒。",
+  "license": "MIT",
+  "author": "星梦",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "gen:pinyin": "node tools/gen-pinyin.mjs",
+    "tauri": "tauri",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-dialog": "^2.8.4",
+    "@tauri-apps/plugin-notification": "^2.8.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.0",
+    "pinyin-pro": "^3.29.5",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.0"
+  }
+}

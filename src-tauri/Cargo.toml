@@ -1,0 +1,33 @@
+[package]
+name = "xiaomeng-memo"
+version = "0.2.1"
+description = "小梦备忘录（待办清单）"
+authors = ["xiaomeng"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "xiaomeng_memo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 重复提醒要按本地时区算下一次（daily / weekdays / weekly）
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+tauri-plugin-notification = "2"
+tauri-plugin-dialog = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

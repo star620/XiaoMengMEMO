@@ -1,0 +1,9 @@
+# 统一换行：仓库里一律 LF，检出到 Windows 也保持 LF（避免整仓 CRLF 噪音）
+* text=auto eol=lf
+
+# 二进制资源不做换行转换
+*.png binary
+*.ico binary
+*.woff2 binary
+*.exe binary
+*.ttf binary

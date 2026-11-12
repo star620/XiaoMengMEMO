@@ -1,0 +1,674 @@
+/* ==========================================================================
+   霞鹜文楷（LXGW WenKai）· 正文/标题字体
+   —— 为什么打包字体？系统楷体（KaiTi）在 13~16px 下发灰、笔画细，撑不起纸感。
+   霞鹜文楷是 OFL 开源协议（可商用、可随本项目 MIT 分发），已做子集化：
+   只保留 ASCII + GB2312 常用字 + 中英标点，24MB → 1.6MB woff2。
+   缺失的极生僻字会自动回退到系统字体，不会显示成方块。
+   许可证见 licenses/LXGW-WenKai-OFL.txt。
+   ========================================================================== */
+@font-face {
+  font-family: "XM WenKai";
+  font-style: normal;
+  /* 只声明 400：声明成 400 700 会让浏览器认为这一档已覆盖 700，反而不会再合成粗体，
+     标题的 font-weight: 700 就完全没效果（实测 400/600/700 渲染宽度一模一样）。
+     只声明 400 后，600/700 由浏览器合成加粗，标题才真的比正文重。 */
+  font-weight: 400;
+  font-display: swap;
+  /* 先 url、后 local：优先用随包分发的同一版字形。若把 local 放前面，
+     用户机器上装过旧版霞鹜文楷时会抢先命中，字宽/字形和打包版不一致，
+     1.6MB 的字体也就白打了。 */
+  src:
+    url("/fonts/xm-wenkai.woff2") format("woff2"),
+    local("LXGW WenKai");
+}
+
+/* ==========================================================================
+   小梦备忘录 · 设计令牌（Design Tokens）
+   风格 A：暖黄便利贴 · 纯纸面（无格线）
+   --------------------------------------------------------------------------
+   这个文件只放「值」：颜色、纸张明暗、墨色、字体、圆角、倾斜角、阴影、缓动。
+   真正怎么用这些值，写在 paper.css 里。
+
+   想换整体气质？只改这里就够了：
+   - 便签颜色：给 .xm-note 加 data-color="yellow|pink|mint|sky|lavender|rose"
+   - 字号大小：改 --xm-font-scale（1 = 标准，设置页里可以直接改这个变量）
+   - 便签歪多少：改 --xm-rot（例如 0deg 就是完全摆正）
+   ========================================================================== */
+
+/* ==========================================================================
+   0. 可插值的纸色（夜间切换的 300ms 过渡）
+   --------------------------------------------------------------------------
+   普通 CSS 变量的颜色变化是"瞬间跳"的，而纸面是一整层渐变，
+   只写 transition: background-color 根本不会动。
+   @property 把这些颜色变量注册成真正的 <color>：一旦 data-theme 从
+   day 切到 night，:root 上的变量值会逐帧插值，纸面渐变/墨色就自己"化"过去了，
+   不用给每个元素写 transition，也不会把 hover 的 0.14s 拖慢成 0.3s。
+   initial-value 必须写日间的值：万一浏览器不支持 @property，页面仍是正常的日间纸。 */
+@property --xm-paper-a { syntax: "<color>"; inherits: true; initial-value: #fff8c4; }
+@property --xm-paper-b { syntax: "<color>"; inherits: true; initial-value: #fff0a0; }
+@property --xm-paper-c { syntax: "<color>"; inherits: true; initial-value: #ffe675; }
+@property --xm-paper-d { syntax: "<color>"; inherits: true; initial-value: #ffde55; }
+@property --xm-paper-back { syntax: "<color>"; inherits: true; initial-value: #fffdf0; }
+@property --xm-paper-back-2 { syntax: "<color>"; inherits: true; initial-value: #fff7d6; }
+@property --xm-ink { syntax: "<color>"; inherits: true; initial-value: #514423; }
+@property --xm-ink-soft { syntax: "<color>"; inherits: true; initial-value: rgba(81, 68, 35, 0.6); }
+@property --xm-ink-faint { syntax: "<color>"; inherits: true; initial-value: rgba(81, 68, 35, 0.34); }
+@property --xm-accent { syntax: "<color>"; inherits: true; initial-value: #d9912b; }
+@property --xm-accent-ink { syntax: "<color>"; inherits: true; initial-value: #6b4a0f; }
+@property --xm-line { syntax: "<color>"; inherits: true; initial-value: rgba(90, 68, 20, 0.22); }
+@property --xm-sheet-a { syntax: "<color>"; inherits: true; initial-value: #fffbf0; }
+@property --xm-sheet-b { syntax: "<color>"; inherits: true; initial-value: #fff5da; }
+@property --xm-sheet-c { syntax: "<color>"; inherits: true; initial-value: #ffeec2; }
+@property --xm-chrome-shell-a { syntax: "<color>"; inherits: true; initial-value: #fff3d6; }
+@property --xm-chrome-shell-b { syntax: "<color>"; inherits: true; initial-value: #ffe7b4; }
+@property --xm-chrome-shell-c { syntax: "<color>"; inherits: true; initial-value: #ffd98f; }
+@property --xm-chrome-face-a { syntax: "<color>"; inherits: true; initial-value: #fffcf2; }
+@property --xm-chrome-face-b { syntax: "<color>"; inherits: true; initial-value: #fff6df; }
+@property --xm-chrome-face-c { syntax: "<color>"; inherits: true; initial-value: #ffefcb; }
+
+:root {
+  /* ：切主题时这 21 个颜色变量用 300ms 一起插值。
+     transition 写在 :root 上，只有 :root 的变量值真的变了才触发；
+     日间调字号、hover、拖拽都不会误触发。 */
+  transition-property:
+    --xm-paper-a, --xm-paper-b, --xm-paper-c, --xm-paper-d,
+    --xm-paper-back, --xm-paper-back-2,
+    --xm-ink, --xm-ink-soft, --xm-ink-faint,
+    --xm-accent, --xm-accent-ink, --xm-line,
+    --xm-sheet-a, --xm-sheet-b, --xm-sheet-c,
+    --xm-chrome-shell-a, --xm-chrome-shell-b, --xm-chrome-shell-c,
+    --xm-chrome-face-a, --xm-chrome-face-b, --xm-chrome-face-c;
+  transition-duration: var(--xm-dur-theme);
+  transition-timing-function: var(--xm-ease-out);
+
+  /* ---------- 1. 纸面渐变：从左上偏亮，到右下偏深 ---------- */
+  --xm-paper-a: #fff8c4; /* 最亮：靠近光源的纸面 */
+  --xm-paper-b: #fff0a0;
+  --xm-paper-c: #ffe675;
+  --xm-paper-d: #ffde55; /* 最深：远离光源、靠近投影的一角 */
+
+  /* 纸背（便签折角 / 面板内页）——比纸面更白更浅 */
+  --xm-paper-back: #fffdf0;
+  --xm-paper-back-2: #fff7d6;
+
+  /* 面板 / 设置页 / 版本详情这张"内页纸"的三段渐变（paper.css §10/§12/§20）。
+     抽成变量是为了夜间能整张换深，同时被 @property 注册后 300ms 插值。 */
+  --xm-sheet-a: #fffbf0;
+  --xm-sheet-b: #fff5da;
+  --xm-sheet-c: #ffeec2;
+
+  /* ---------- 2. 墨色（文字） ---------- */
+  --xm-ink: #514423; /* 主文字：暖褐色，不用纯黑，才像钢笔写在纸上 */
+  --xm-ink-soft: rgba(81, 68, 35, 0.6); /* 次要文字：占位符、页脚、元信息 */
+  --xm-ink-faint: rgba(81, 68, 35, 0.34); /* 更淡：装饰线、图标默认色 */
+
+  /* ---------- 3. 强调色（图钉 / 选中的复选框 / 主按钮） ---------- */
+  --xm-accent: #d9912b; /* 琥珀色，和暖黄纸最搭 */
+  --xm-accent-ink: #6b4a0f; /* 强调色底上的深色文字 */
+  --xm-accent-soft: rgba(217, 145, 43, 0.16); /* 强调色的淡底（角标、选中背景） */
+
+  /* 墨色的两级"加强版"（都从 --xm-ink 派生，所以六种纸色自动跟着变）：
+     - meta：时间戳、页脚这类次要信息。0.78 的透明度在暖黄纸上仍能到 4.5:1 以上，
+       看得清，又不会和标题抢注意力；
+     - strong：卡片标题这种要"立起来"的字，比正文墨色再压暗一档。 */
+  --xm-ink-meta: color-mix(in srgb, var(--xm-ink) 78%, transparent);
+  --xm-ink-strong: color-mix(in srgb, var(--xm-ink) 84%, #000);
+
+  /* 卡片右上角"备忘 / 待办"角标的颜色：备忘=琥珀、待办=墨绿。
+     背景都只是 16%~18% 的淡色，文字用各自的深色，整体仍然是"纸上的小标签"。 */
+  --xm-badge-memo-bg: rgba(217, 145, 43, 0.18);
+  --xm-badge-memo-ink: #6b4a0f;
+  --xm-badge-todo-bg: rgba(74, 106, 78, 0.16);
+  --xm-badge-todo-ink: #2f5236;
+  /* 第三种便签「随身笔记」（kind=vault）的角标：黛青，比 todo 的墨绿更冷一点，
+     像纸上盖的一枚小蓝印，不抢暖黄纸的主调。 */
+  --xm-badge-vault-bg: rgba(74, 90, 122, 0.16);
+  --xm-badge-vault-ink: #33415e;
+
+  /* 随身笔记专用（paper.css §21）：
+     - dot：打码点阵的墨色，比正常次要文字再淡一档，但要能看出"这里有内容"；
+     - copy：复制成功时那层一闪而过的暖黄高亮。 */
+  --xm-vault-dot: rgba(81, 68, 35, 0.52);
+  --xm-vault-copy: rgba(243, 180, 69, 0.34);
+
+  /* 版本差异（paper.css §22）：
+     用户要「像 GitHub 提交那样看到改了哪几个字」，所以用两支低饱和荧光笔——
+     新增是墨绿（和待办角标同一族），删除是朱红（和危险色同一族）。
+     底只有 12%~16%，压字色而不是盖一块纯色，暖黄纸上才像"笔划过的痕迹"。 */
+  --xm-diff-add-bg: rgba(74, 106, 78, 0.16);
+  --xm-diff-add-ink: #2f5236;
+  --xm-diff-add-line: rgba(47, 82, 54, 0.45);
+  --xm-diff-del-bg: rgba(178, 61, 47, 0.12);
+  --xm-diff-del-ink: #8f3a2f;
+  --xm-diff-del-line: rgba(143, 58, 47, 0.4);
+
+  /* 描边 / 分隔线：用墨色系半透明，纸上才不像 UI 线框 */
+  --xm-line: rgba(90, 68, 20, 0.22);
+  --xm-line-soft: rgba(90, 68, 20, 0.12);
+
+  /* 手绘复选框的框线、完成态的划线颜色 */
+  --xm-check: #6b5a22;
+  --xm-strike: rgba(81, 68, 35, 0.45);
+
+  /* 待办拖拽的落点线（paper.css §25）：墨绿，压在暖黄纸上很清楚；
+     比纯黑更像"用绿笔在清单上划的一道"，也不和新增长条的荧光绿撞。 */
+  --xm-drop-line: #4d7a52;
+
+  /* 危险动作（清空回收站 / 删除）：砖红，不用纯红——纸上的朱笔要压一点，
+     和暖黄纸是一家人，又明确"这是会丢东西的按钮" */
+  --xm-danger: #8b3a2a;
+  --xm-danger-soft: rgba(139, 58, 42, 0.14);
+
+  /* ---------- 4. 光影：便签像纸片浮在桌面上 ---------- */
+  /*  G1：投影改成"暖色双层"——
+     ① 近处实影：纸刚压到桌面，贴边一圈很硬的暗；
+     ② 远处柔影：纸与桌面之间那层空气散开的影。
+     两层都用暖褐 rgba(120 90 30)，比中性的黑灰更像"木头桌面上放一张暖黄纸"；
+     近影在四周、柔影往右下散，所以四条边都有影子，不会只有下沿发黑。 */
+  --xm-shadow-deep: rgba(74, 52, 8, 0.24);
+  --xm-shadow-near: 0 1px 2px rgba(120, 90, 30, 0.18); /* G1 近处实影 */
+  --xm-shadow-far: 0 10px 24px -8px rgba(120, 90, 30, 0.26); /* G1 远处柔影 */
+
+  /* 纸面阴影 = 内圈（纸的厚度 / 受光 / 左右纸边）+ G1 两层暖色外投影。
+     G2：上下靠 .xm-note__body::before/after 的 3px 暗边，左右在这里补
+     1px 极淡的内侧暗线（右比左深一点：光从左上来，右边更背光）。 */
+  --xm-paper-shadow:
+    inset 0 0 0 1px rgba(120, 88, 20, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 1px 0 0 rgba(120, 88, 20, 0.07),
+    inset -1px 0 0 rgba(120, 88, 20, 0.1),
+    inset 0 -14px 22px -16px rgba(140, 100, 20, 0.22),
+    var(--xm-shadow-near),
+    var(--xm-shadow-far);
+  /* 鼠标悬停：纸被"拿起来"一点点，只是影子变深，不位移（避免抖动） */
+  --xm-paper-shadow-hover:
+    inset 0 0 0 1px rgba(120, 88, 20, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    inset 1px 0 0 rgba(120, 88, 20, 0.07),
+    inset -1px 0 0 rgba(120, 88, 20, 0.12),
+    inset 0 -14px 22px -16px rgba(140, 100, 20, 0.22),
+    0 2px 3px rgba(120, 90, 30, 0.2),
+    0 14px 30px -8px rgba(120, 90, 30, 0.31);
+  /* 正在写：内圈亮一点，像刚被压住、笔尖落下 */
+  --xm-paper-shadow-edit:
+    inset 0 0 0 1px rgba(196, 146, 36, 0.3),
+    inset 0 0 26px rgba(255, 255, 255, 0.32),
+    inset 1px 0 0 rgba(120, 88, 20, 0.06),
+    inset -1px 0 0 rgba(120, 88, 20, 0.09),
+    0 1px 2px rgba(120, 90, 30, 0.16),
+    0 10px 22px -8px rgba(120, 90, 30, 0.2);
+
+  /* ---------- 5. 形状 ---------- */
+  --xm-radius: 2px; /* 便签圆角：几乎方的，才像真便利贴 */
+  --xm-radius-sm: 8px; /* 小控件圆角 */
+  --xm-radius-panel: 14px; /* 面板 / 设置窗口圆角 */
+  --xm-rot: -1deg; /* 便签轻微歪一点，摆正了反而假（纸要铺满窗口，所以只歪一点点） */
+
+  /* ---------- 5.1 无边框纸窗 .xm-chrome（面板 / 设置 / 提醒用） ----------
+     纸直接铺满窗口：不留透明空地（留了会在浅色壁纸上显出一圈"白边"）。
+     纸的厚度/折角改由内描边 + 内阴影表达，投影不再散到窗外。 */
+  --xm-chrome-gap: 0px;
+  --xm-chrome-radius: 14px; /* 纸窗外圆角（12~16 之间，太圆不像纸） */
+  --xm-chrome-head: 30px; /* 标题条高度：够放下手绘圆点，又不吃掉内容 */
+  --xm-chrome-head-compact: 24px; /* 提醒窗口只有 240 高，标题条要更矮 */
+
+  /* 纸窗外圈（"封皮"）：比内页更暖、更深，才有一层纸压着一层纸的感觉 */
+  --xm-chrome-shell-a: #fff3d6;
+  --xm-chrome-shell-b: #ffe7b4;
+  --xm-chrome-shell-c: #ffd98f;
+  /* 内页：真正写字的那层纸，接近便签纸色 */
+  --xm-chrome-face-a: #fffcf2;
+  --xm-chrome-face-b: #fff6df;
+  --xm-chrome-face-c: #ffefcb;
+  /* 纸边高光 / 压痕：1px 的亮边加 1px 的暗痕，纸才有厚度。
+      G3：标题条与内页交界处必须是"一条高光 + 一条暗线"，
+     各 1px、不加粗、不影响标题对比度。 */
+  --xm-chrome-edge: rgba(120, 88, 20, 0.34);
+  --xm-chrome-crease: rgba(120, 90, 30, 0.18);
+  --xm-chrome-crease-hi: rgba(255, 250, 235, 0.7);
+  /* 纸边：全部画在窗内——1px 内描边 + 顶部受光 + 底部厚度感，
+     不再往外投影（纸铺满窗口，往外投也被窗口边缘切掉）。 */
+  --xm-chrome-shadow:
+    inset 0 0 0 1px var(--xm-chrome-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -2px 3px -2px rgba(120, 90, 30, 0.26),
+    inset 0 0 20px rgba(146, 108, 16, 0.07);
+
+  /* ---------- 6. 字体（正文＝霞鹜文楷，随包分发；界面小字同族，缺字回退系统） ---------- */
+  /* 回退顺序很重要：实测本机没装霞鹜文楷时，Noto Serif SC 排在楷体前面会被命中，
+     正文会变成"宋体印刷感"，纸上的手写味全没了。所以楷体（Windows 自带 simkai.ttf）
+     必须排在 Noto Serif SC 之前——没有文楷时宁可退到楷体，也不要退到宋体。 */
+  --xm-font-hand: "XM WenKai", "LXGW WenKai", "KaiTi", "楷体", "STKaiti", "KaiTi_GB2312", "Noto Serif SC", "Songti SC", serif;
+  --xm-font-ui: "XM WenKai", "LXGW WenKai", "Noto Serif SC", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --xm-font-scale: 1; /* 字号缩放（设置页可调：1.0 / 1.15 / 1.3） */
+  --xm-font-base: calc(16px * var(--xm-font-scale)); /* 便签正文基准字号 */
+
+  /* ---------- 6.1 Markdown 渲染（paper.css §18 用） ----------
+     代码块不是"网页里的灰框"，而是"另一张小纸片"：
+     纸白偏亮 + 极淡墨色内描边，才和便签纸是一家人。 */
+  --xm-font-mono: Consolas, "Cascadia Mono", "Courier New", monospace;
+  --xm-code-bg: rgba(255, 255, 255, 0.42); /* 代码块的浅纸底 */
+  --xm-code-line: rgba(120, 88, 20, 0.24); /* 代码块的 1px 内描边（像纸边，太淡就看不见了） */
+
+  /* ---------- 7. 纸纹：一张 160x160 的 SVG 噪点，铺满纸面 ---------- */
+  /* feTurbulence 生成随机纤维噪点，gray 化后当纸纹。零图片文件，纯代码生成。 */
+  --xm-tex: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='160' height='160' filter='url(%23n)' opacity='0.5'/></svg>");
+
+  /* ---------- 8. 动效：时长与缓动统一管理 ---------- */
+  --xm-dur-in: 0.22s; /* 便签入场（M3：纸落下，220ms） */
+  --xm-dur-panel: 0.16s; /* 面板登场 */
+  --xm-dur-edge: 0.14s; /* 正文滚动时，纸边渐隐/暗边的切换 */
+  --xm-dur-quick: 0.14s; /* hover / 小状态 */
+  --xm-dur-theme: 0.3s; /* 日间/夜间纸色切换 */
+  --xm-ease-out: cubic-bezier(0.22, 0.61, 0.36, 1); /* 顺滑收尾 */
+  --xm-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* 带一点回弹，像纸 */
+
+  /* ---------- 9. 正文滚动：纸边渐隐 ----------
+     memo 滚 .xm-sheet、todo 滚 .xm-todos。前端只改便签根的
+     data-scroll="top|middle|bottom" 与 class is-scrollable，不用碰这些变量。
+     渐隐为什么是 12px：320x380 的小窗里再高一点，正文就"糊"了、看不清第一行。 */
+  --xm-edge-fade: 12px; /* 上/下纸边渐隐的高度 */
+
+  /* ---------- 10. 已删除的早期别名 ----------
+     --paper-1..4 / --ink / --ink-strong / --ink-soft / --font-hand /
+     --font-ui / --note-radius / --note-tilt 都是早期 demo 的名字。
+     当前 TS 与样式全部零引用，留着只会让读者以为还在用，已删除。 */
+}
+
+/* ==========================================================================
+   6 套便签配色
+   规则：只覆盖"纸面四段渐变 + 墨色 + 强调色"，不改变形状和阴影。
+   为什么这样做？——换色后纸感、投影、折角全部保持一致，界面不会花。
+   注意：.xm-card 也用同一套 data-color，所以卡片左侧色条会跟着变。
+   ========================================================================== */
+
+/* 暖黄（默认色，不需要加 data-color 也是它） */
+:root,
+.xm-note[data-color="yellow"],
+.xm-card[data-color="yellow"] {
+  --xm-paper-a: #fff8c4;
+  --xm-paper-b: #fff0a0;
+  --xm-paper-c: #ffe675;
+  --xm-paper-d: #ffde55;
+  --xm-ink: #514423;
+  --xm-ink-soft: rgba(81, 68, 35, 0.6);
+  --xm-ink-faint: rgba(81, 68, 35, 0.34);
+  --xm-accent: #d9912b;
+  --xm-accent-ink: #6b4a0f;
+  --xm-accent-soft: rgba(217, 145, 43, 0.16);
+  --xm-line: rgba(90, 68, 20, 0.22);
+  --xm-check: #6b5a22;
+  --xm-strike: rgba(81, 68, 35, 0.45);
+}
+
+/* 蜜桃粉 */
+.xm-note[data-color="pink"],
+.xm-card[data-color="pink"] {
+  --xm-paper-a: #fff4f0;
+  --xm-paper-b: #ffe6de;
+  --xm-paper-c: #ffd3c6;
+  --xm-paper-d: #ffc1b0;
+  --xm-ink: #5c3830;
+  --xm-ink-soft: rgba(92, 56, 48, 0.6);
+  --xm-ink-faint: rgba(92, 56, 48, 0.34);
+  --xm-accent: #e08869;
+  --xm-accent-ink: #7a3f28;
+  --xm-accent-soft: rgba(224, 136, 105, 0.18);
+  --xm-line: rgba(110, 66, 54, 0.22);
+  --xm-check: #7a4a3a;
+  --xm-strike: rgba(92, 56, 48, 0.45);
+}
+
+/* 薄荷绿 */
+.xm-note[data-color="mint"],
+.xm-card[data-color="mint"] {
+  --xm-paper-a: #f3fbf0;
+  --xm-paper-b: #e7f6e1;
+  --xm-paper-c: #d5eecd;
+  --xm-paper-d: #c2e5b9;
+  --xm-ink: #2f4a33;
+  --xm-ink-soft: rgba(47, 74, 51, 0.6);
+  --xm-ink-faint: rgba(47, 74, 51, 0.34);
+  --xm-accent: #6fae7c;
+  --xm-accent-ink: #2c5a38;
+  --xm-accent-soft: rgba(111, 174, 124, 0.18);
+  --xm-line: rgba(60, 100, 66, 0.22);
+  --xm-check: #3f6b48;
+  --xm-strike: rgba(47, 74, 51, 0.45);
+}
+
+/* 天空蓝 */
+.xm-note[data-color="sky"],
+.xm-card[data-color="sky"] {
+  --xm-paper-a: #f1f8ff;
+  --xm-paper-b: #e3f0fe;
+  --xm-paper-c: #d0e5fb;
+  --xm-paper-d: #bbd8f7;
+  --xm-ink: #2c4258;
+  --xm-ink-soft: rgba(44, 66, 88, 0.6);
+  --xm-ink-faint: rgba(44, 66, 88, 0.34);
+  --xm-accent: #6b9fd0;
+  --xm-accent-ink: #2a4e70;
+  --xm-accent-soft: rgba(107, 159, 208, 0.18);
+  --xm-line: rgba(52, 82, 110, 0.22);
+  --xm-check: #3d6484;
+  --xm-strike: rgba(44, 66, 88, 0.45);
+}
+
+/* 薰衣草紫 */
+.xm-note[data-color="lavender"],
+.xm-card[data-color="lavender"] {
+  --xm-paper-a: #f8f3ff;
+  --xm-paper-b: #eee4fe;
+  --xm-paper-c: #e0cefa;
+  --xm-paper-d: #d0b8f5;
+  --xm-ink: #463256;
+  --xm-ink-soft: rgba(70, 50, 86, 0.6);
+  --xm-ink-faint: rgba(70, 50, 86, 0.34);
+  --xm-accent: #9878c6;
+  --xm-accent-ink: #4f3475;
+  --xm-accent-soft: rgba(152, 120, 198, 0.18);
+  --xm-line: rgba(84, 62, 104, 0.22);
+  --xm-check: #5f4478;
+  --xm-strike: rgba(70, 50, 86, 0.45);
+}
+
+/* 蔷薇红 */
+.xm-note[data-color="rose"],
+.xm-card[data-color="rose"] {
+  --xm-paper-a: #fff3f5;
+  --xm-paper-b: #ffe3e8;
+  --xm-paper-c: #ffcdd7;
+  --xm-paper-d: #ffb6c6;
+  --xm-ink: #5a2c37;
+  --xm-ink-soft: rgba(90, 44, 55, 0.6);
+  --xm-ink-faint: rgba(90, 44, 55, 0.34);
+  --xm-accent: #d0728a;
+  --xm-accent-ink: #7b3247;
+  --xm-accent-soft: rgba(208, 114, 138, 0.18);
+  --xm-line: rgba(112, 58, 70, 0.22);
+  --xm-check: #7d3f4f;
+  --xm-strike: rgba(90, 44, 55, 0.45);
+}
+
+/* ==========================================================================
+   深浅两态：便签"正在写"时墨色略深
+   为什么会这样：真的纸上，笔刚落下时墨还没干，显得更黑更实。
+   ========================================================================== */
+.xm-note[data-editing="1"] {
+  --xm-ink: #3f3316;
+  --xm-ink-soft: rgba(63, 51, 22, 0.66);
+}
+
+/* 其他 5 种颜色在书写态下也同步加深（保持各自色相，只压暗） */
+.xm-note[data-color="pink"][data-editing="1"] {
+  --xm-ink: #4a2a22;
+  --xm-ink-soft: rgba(74, 42, 34, 0.66);
+}
+.xm-note[data-color="mint"][data-editing="1"] {
+  --xm-ink: #223a26;
+  --xm-ink-soft: rgba(34, 58, 38, 0.66);
+}
+.xm-note[data-color="sky"][data-editing="1"] {
+  --xm-ink: #1f3446;
+  --xm-ink-soft: rgba(31, 52, 70, 0.66);
+}
+.xm-note[data-color="lavender"][data-editing="1"] {
+  --xm-ink: #362342;
+  --xm-ink-soft: rgba(54, 35, 66, 0.66);
+}
+.xm-note[data-color="rose"][data-editing="1"] {
+  --xm-ink: #47202a;
+  --xm-ink-soft: rgba(71, 32, 42, 0.66);
+}
+
+/* ==========================================================================
+   夜间纸色
+   --------------------------------------------------------------------------
+   不是"把页面反色"，而是换一叠纸：暖黄的纸变成深褐灰的牛皮纸，
+   墨色从深褐换成米白，强调色提亮一档。正文对纸面全部 ≥ 7:1（实测 9.6~11.5）。
+   夜间规则放在文件最后：日间配色块（0,2,0）在前面，这里用同样的
+   0,2,0 / 0,3,0 特异性 + 更晚的出现顺序压过它们。
+   ========================================================================== */
+
+:root[data-theme="night"] {
+  /* 纸面：暖黄 → 深褐灰。仍然保留"左上亮、右下深"的斜向层次，
+     所以夜间纸不是一块死板的深色矩形。 */
+  --xm-paper-a: #3c3627;
+  --xm-paper-b: #35301f;
+  --xm-paper-c: #2e2a1b;
+  --xm-paper-d: #272416;
+  --xm-paper-back: #3a3425; /* 折角露出的纸背 */
+  --xm-paper-back-2: #332e20;
+
+  /* 内页纸（面板 / 设置 / 版本详情）：比便签略深一点，卡片压上去才有层次 */
+  --xm-sheet-a: #3a3425;
+  --xm-sheet-b: #332e1f;
+  --xm-sheet-c: #2b2718;
+
+  /* 墨色：米白，略微偏暖，像台灯下的白墨 */
+  --xm-ink: #f1e6cc;
+  --xm-ink-soft: rgba(241, 230, 204, 0.72);
+  --xm-ink-faint: rgba(241, 230, 204, 0.42);
+  --xm-ink-meta: rgba(241, 230, 204, 0.8);
+  --xm-ink-strong: #fff8e8;
+
+  --xm-accent: #e0a13c; /* 夜间琥珀提亮一档，否则在深纸上发闷 */
+  --xm-accent-ink: #f2c87c; /* 强调底上的字：浅琥珀（对纸 8.36:1） */
+  --xm-accent-soft: rgba(224, 161, 60, 0.2);
+
+  --xm-badge-memo-bg: rgba(224, 161, 60, 0.22);
+  --xm-badge-memo-ink: #f4cf8a;
+  --xm-badge-todo-bg: rgba(120, 170, 130, 0.22);
+  --xm-badge-todo-ink: #b9e0c0;
+  --xm-badge-vault-bg: rgba(120, 145, 185, 0.24);
+  --xm-badge-vault-ink: #c3d5f0;
+
+  --xm-vault-dot: rgba(241, 230, 204, 0.52);
+  --xm-vault-copy: rgba(243, 180, 69, 0.3);
+
+  --xm-diff-add-bg: rgba(100, 165, 115, 0.24);
+  --xm-diff-add-ink: #a9dcb2;
+  --xm-diff-add-line: rgba(150, 215, 165, 0.5);
+  --xm-diff-del-bg: rgba(215, 105, 92, 0.22);
+  --xm-diff-del-ink: #f2b0a4;
+  --xm-diff-del-line: rgba(240, 160, 145, 0.5);
+
+  --xm-line: rgba(240, 225, 195, 0.2);
+  --xm-line-soft: rgba(240, 225, 195, 0.12);
+  --xm-check: #cdbb92;
+  --xm-strike: rgba(241, 230, 204, 0.42);
+
+  --xm-danger: #e29280;
+  --xm-danger-soft: rgba(226, 146, 128, 0.16);
+
+  /* 阴影：深纸上暖影看不见，改用纯黑；内圈留一点暖白，纸才有"边" */
+  --xm-shadow-deep: rgba(0, 0, 0, 0.6);
+  --xm-shadow-near: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --xm-shadow-far: 0 12px 28px -8px rgba(0, 0, 0, 0.6);
+  --xm-paper-shadow:
+    inset 0 0 0 1px rgba(255, 239, 205, 0.12),
+    inset 0 1px 0 rgba(255, 245, 220, 0.1),
+    inset 1px 0 0 rgba(0, 0, 0, 0.22),
+    inset -1px 0 0 rgba(0, 0, 0, 0.28),
+    inset 0 -14px 22px -16px rgba(0, 0, 0, 0.5),
+    0 2px 3px rgba(0, 0, 0, 0.5),
+    0 14px 30px -8px rgba(0, 0, 0, 0.6);
+  --xm-paper-shadow-hover:
+    inset 0 0 0 1px rgba(255, 239, 205, 0.16),
+    inset 0 1px 0 rgba(255, 245, 220, 0.12),
+    inset 1px 0 0 rgba(0, 0, 0, 0.22),
+    inset -1px 0 0 rgba(0, 0, 0, 0.3),
+    inset 0 -14px 22px -16px rgba(0, 0, 0, 0.5),
+    0 2px 3px rgba(0, 0, 0, 0.55),
+    0 18px 36px -8px rgba(0, 0, 0, 0.66);
+  --xm-paper-shadow-edit:
+    inset 0 0 0 1px rgba(224, 161, 60, 0.36),
+    inset 0 0 26px rgba(255, 235, 190, 0.06),
+    inset 1px 0 0 rgba(0, 0, 0, 0.2),
+    inset -1px 0 0 rgba(0, 0, 0, 0.26),
+    0 1px 2px rgba(0, 0, 0, 0.45),
+    0 10px 22px -8px rgba(0, 0, 0, 0.55);
+
+  /* 纸窗封皮 / 内页 */
+  --xm-chrome-shell-a: #3a3323;
+  --xm-chrome-shell-b: #322c1d;
+  --xm-chrome-shell-c: #2a2517;
+  --xm-chrome-face-a: #3b3526;
+  --xm-chrome-face-b: #34301f;
+  --xm-chrome-face-c: #2d291a;
+  --xm-chrome-edge: rgba(255, 235, 195, 0.22);
+  --xm-chrome-crease: rgba(0, 0, 0, 0.5);
+  --xm-chrome-crease-hi: rgba(255, 245, 220, 0.1);
+  --xm-chrome-shadow:
+    inset 0 0 0 1px var(--xm-chrome-edge),
+    inset 0 1px 0 rgba(255, 245, 220, 0.12),
+    inset 0 -2px 3px -2px rgba(0, 0, 0, 0.5),
+    inset 0 0 20px rgba(0, 0, 0, 0.2);
+
+  /* 代码块：不是白纸片了，是"深色的一张薄纸" */
+  --xm-code-bg: rgba(255, 255, 255, 0.07);
+  --xm-code-line: rgba(255, 235, 195, 0.18);
+
+  /* 待办拖拽的落点线：深纸上用浅墨绿，比深绿看得见 */
+  --xm-drop-line: #8fbf96;
+}
+
+/* 便签根：夜间默认墨色。日间 .xm-note[data-color="yellow"] 是 0,2,0，
+   这里同为 0,2,0 但更晚，兜住没写 data-color 的便签。 */
+[data-theme="night"] .xm-note {
+  --xm-ink: #f1e6cc;
+  --xm-ink-soft: rgba(241, 230, 204, 0.72);
+  --xm-ink-faint: rgba(241, 230, 204, 0.42);
+  --xm-ink-meta: rgba(241, 230, 204, 0.8);
+  --xm-ink-strong: #fff8e8;
+  --xm-accent: #e0a13c;
+  --xm-accent-ink: #f2c87c;
+  --xm-accent-soft: rgba(224, 161, 60, 0.2);
+  --xm-line: rgba(240, 225, 195, 0.2);
+  --xm-check: #cdbb92;
+  --xm-strike: rgba(241, 230, 204, 0.42);
+}
+
+/* 夜间"正在写"：日间的书写态会把墨压深（在深纸上等于把字变暗），
+   这里改成微微提亮。放在逐色规则之前，彩色便签再由逐色规则接管色相。 */
+[data-theme="night"] .xm-note[data-editing="1"] {
+  --xm-ink: #fff3d8;
+  --xm-ink-soft: rgba(255, 245, 220, 0.8);
+  --xm-ink-meta: rgba(255, 245, 220, 0.86);
+  --xm-ink-strong: #fffdf2;
+}
+
+/* ---------- 六种颜色的夜间纸 ----------
+   日间每一套都是"浅纸 + 深墨"；夜间反过来：同色相的深纸 + 同色相的浅墨。
+   对比度按 WCAG 算过（正文 / 最深一段纸）：黄 10.62、粉 11.40、薄荷 11.31、
+   天空 11.12、薰衣草 11.35、蔷薇 11.49，全部 ≥ 7:1。 */
+[data-theme="night"] .xm-note[data-color="yellow"],
+[data-theme="night"] .xm-card[data-color="yellow"] {
+  --xm-paper-a: #3c3627;
+  --xm-paper-b: #35301f;
+  --xm-paper-c: #2e2a1b;
+  --xm-paper-d: #272416;
+  --xm-ink: #f1e6cc;
+  --xm-ink-soft: rgba(241, 230, 204, 0.72);
+  --xm-ink-faint: rgba(241, 230, 204, 0.42);
+  --xm-ink-meta: rgba(241, 230, 204, 0.8);
+  --xm-ink-strong: #fff8e8;
+  --xm-accent: #e0a13c;
+  --xm-accent-ink: #f2c87c;
+  --xm-accent-soft: rgba(224, 161, 60, 0.2);
+  --xm-line: rgba(240, 225, 195, 0.2);
+  --xm-check: #cdbb92;
+  --xm-strike: rgba(241, 230, 204, 0.42);
+}
+[data-theme="night"] .xm-note[data-color="pink"],
+[data-theme="night"] .xm-card[data-color="pink"] {
+  --xm-paper-a: #3b2e2b;
+  --xm-paper-b: #342825;
+  --xm-paper-c: #2e2421;
+  --xm-paper-d: #281f1d;
+  --xm-ink: #f3e3dc;
+  --xm-ink-soft: rgba(243, 227, 220, 0.72);
+  --xm-ink-faint: rgba(243, 227, 220, 0.42);
+  --xm-ink-meta: rgba(243, 227, 220, 0.8);
+  --xm-ink-strong: #fff4ef;
+  --xm-accent: #e8a08c;
+  --xm-accent-ink: #f5c4b4;
+  --xm-accent-soft: rgba(232, 160, 140, 0.2);
+  --xm-line: rgba(243, 227, 220, 0.2);
+  --xm-check: #d8b9ae;
+  --xm-strike: rgba(243, 227, 220, 0.42);
+}
+[data-theme="night"] .xm-note[data-color="mint"],
+[data-theme="night"] .xm-card[data-color="mint"] {
+  --xm-paper-a: #2f3730;
+  --xm-paper-b: #29312b;
+  --xm-paper-c: #242c26;
+  --xm-paper-d: #1f2721;
+  --xm-ink: #e4efe2;
+  --xm-ink-soft: rgba(228, 239, 226, 0.72);
+  --xm-ink-faint: rgba(228, 239, 226, 0.42);
+  --xm-ink-meta: rgba(228, 239, 226, 0.8);
+  --xm-ink-strong: #f2fbf0;
+  --xm-accent: #8fc99a;
+  --xm-accent-ink: #b8e4bf;
+  --xm-accent-soft: rgba(143, 201, 154, 0.2);
+  --xm-line: rgba(228, 239, 226, 0.2);
+  --xm-check: #b8ccb5;
+  --xm-strike: rgba(228, 239, 226, 0.42);
+}
+[data-theme="night"] .xm-note[data-color="sky"],
+[data-theme="night"] .xm-card[data-color="sky"] {
+  --xm-paper-a: #2c343d;
+  --xm-paper-b: #273039;
+  --xm-paper-c: #232b33;
+  --xm-paper-d: #1e262d;
+  --xm-ink: #e2ebf5;
+  --xm-ink-soft: rgba(226, 235, 245, 0.72);
+  --xm-ink-faint: rgba(226, 235, 245, 0.42);
+  --xm-ink-meta: rgba(226, 235, 245, 0.8);
+  --xm-ink-strong: #f1f7ff;
+  --xm-accent: #8db8dd;
+  --xm-accent-ink: #b6d4ee;
+  --xm-accent-soft: rgba(141, 184, 221, 0.2);
+  --xm-line: rgba(226, 235, 245, 0.2);
+  --xm-check: #b0c4d6;
+  --xm-strike: rgba(226, 235, 245, 0.42);
+}
+[data-theme="night"] .xm-note[data-color="lavender"],
+[data-theme="night"] .xm-card[data-color="lavender"] {
+  --xm-paper-a: #35303d;
+  --xm-paper-b: #2f2a37;
+  --xm-paper-c: #292431;
+  --xm-paper-d: #241f2b;
+  --xm-ink: #ece5f6;
+  --xm-ink-soft: rgba(236, 229, 246, 0.72);
+  --xm-ink-faint: rgba(236, 229, 246, 0.42);
+  --xm-ink-meta: rgba(236, 229, 246, 0.8);
+  --xm-ink-strong: #f8f2ff;
+  --xm-accent: #b39bdd;
+  --xm-accent-ink: #d3c2ef;
+  --xm-accent-soft: rgba(179, 155, 221, 0.2);
+  --xm-line: rgba(236, 229, 246, 0.2);
+  --xm-check: #c4b8d6;
+  --xm-strike: rgba(236, 229, 246, 0.42);
+}
+[data-theme="night"] .xm-note[data-color="rose"],
+[data-theme="night"] .xm-card[data-color="rose"] {
+  --xm-paper-a: #3b2b31;
+  --xm-paper-b: #34262b;
+  --xm-paper-c: #2e2227;
+  --xm-paper-d: #281d22;
+  --xm-ink: #f4e1e6;
+  --xm-ink-soft: rgba(244, 225, 230, 0.72);
+  --xm-ink-faint: rgba(244, 225, 230, 0.42);
+  --xm-ink-meta: rgba(244, 225, 230, 0.8);
+  --xm-ink-strong: #fff3f6;
+  --xm-accent: #dd8fa5;
+  --xm-accent-ink: #f0b6c5;
+  --xm-accent-soft: rgba(221, 143, 165, 0.2);
+  --xm-line: rgba(244, 225, 230, 0.2);
+  --xm-check: #d6b6be;
+  --xm-strike: rgba(244, 225, 230, 0.42);
+}
+

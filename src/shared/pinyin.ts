@@ -1,0 +1,76 @@
+// 这个文件由 tools/gen-pinyin.mjs 生成，请勿手改。
+// 重新生成：npm run gen:pinyin
+// 常用汉字 -> 拼音首字母（zh/ch/sh 已归并为 z/c/s），用于面板拼音首字母搜索。
+// 数据来源：pinyin-pro 自带常用词表（dict2/3/4）中出现的单字，未收录的字不参与首字母匹配。
+const CHARS =
+  "这个成为认作部分要求应该增长提供觉得任务那称主了解处理皇上只大量力几乎干目的行见识市师父调查重新知导弹质款列话业隔在家内外同本伍洋银商支总情懂规当货太入中农工建" +
+  "各号高首尾末距换会辈道参与充尽管生数院强能音乐以于蒙古有适好兴不产胖子显是似率领改禁答少年趣监休息校更合喝庆使审累计给予极冠军仿佛头发投降仔细将含积地县女路怕储" +
+  "挑战西藏记真士差别较老夫异模样确便宜名石州止漂亮炮族角色快人复胡弟兄睡一团队区难丫王爷誉伙华山椅流勉过济南动燕京毒晓变打苹果念挣扎三剥削丞相寻思夺线呼吁罚官柏林" +
+  "亲戚身胳膊着手炸咳嗽叶下载器间接底扮药热弱骨容糊转科置急迫庭喇嘛镇免实度假貌委屈期伯圈笼罩都督帝东护城迁故定六安宰对公空白水舌没收李判散文境孙拳组宁可薄还原修来" +
+  "顾爱馒厂司劲恰儿站折腾统命木壳活补巴奇钥匙做沉哑车恶心担届运格式正月营婿咽喉阳化吐蕃钻进被舍杉击排次防吆里研伺候申枕拚社归批畜牧点甚小眼死厌鼓树秘鲁方班星宿愿钦" +
+  "勾减谍埋怨结淹村连自武温直奔剂泄露八切割晃令狐害句偿疙瘩堵塞电荷看守辟郁闷早断指除想级棍妇致纳卷起扇络叭妥陆吗夹曝光曲机叫逐啊哟出垛口撇开厅误传铺设事杆菌酋返额" +
+  "面销坊照哎呀集议风筝邪隙迭偏声屯无射创伤海满叠落单现杂用萝卜附罪咀嚼政负枪悄然衅代酒吧懒衣茶杠鲜演试酬毋包前烟非门后彩暖和遣倔宝丧约莫纤替装背帖松反省坦苏鄙混蛋" +
+  "贞观耐吓唬未引抽沙席标扭采论语盖弄堂舞雨毛速攻惩榴条围阻纠葛颠簸姥迷苦错暑搭助红晕喜敌蛤蟆请钉丽核承问交缺绿胆执低闭轻占扫帚龟兹裁缝礼血泊乱倒取咱爪哇悟嚷柜擂眩" +
+  "配躯役坎坷养退府朴匀瘦膏吞居靡放估失妄者哄劝矢法嗜刀片丸稀亏歇翘决表尺招职斗篷警锄疟疾唠叨限屏逢氢脖颈妃缥缈奖才施游说巷膀胱勿精恐扁需飞微型即攒或浅章顺位旅咔嚓" +
+  "悠麦许练划船伎俩拨憎刻挟具著保吸症勘史价压根怔住允拗世等腔瓜帅窝囊汗并鹰磋日押滋脚婆缘闲怒边何曾零轰隆逆牟利栅栏档佝偻场甲制殷固骄横草气肯拘泥髻猛摸拖呢绒探层魄" +
+  "客孔荥烦仓卒叉受染臂板跟算赘笑掉意蛮短清奏专湮垫良哗啦漫脱送及雾离苔栓哈欠平达填刁诱搪征火付哪吒刷葬带订柞蚕份咧嘴典寒须枝属抢乡兆寺抹布消准什物番禺啡盐虎独乌拉" +
+  "回胶冒弦国丹卡拮据刹播尉冲苍厚威纹俗明眯软牙败猜拾掇掺箕弓加注淤马氏经关逃磨蹭颤栗蚂蚱撮趔趄摔台粘邑婀娜味治恫民仗服骁刑财历北辱脸凉腰溜嘎桔梗逗歌拓遒逶迤搅摩挲" +
+  "苗牲荫杈铁视纫愁佗箱终鬓旦厦莞食宫池炉哀劈柴势天共验盘萎唱超始铃铛披轮泡桐抛撒通奉午浪砚油学笔阅祖覆律印芋张藤蔓幸褪去霰柚痕雅哭诈猪咋铣床健多桨波跳蚤俏皮嗒时鼻" +
+  "推侯煞籍债偶雷狼藉饭簿把词步账隽永稍易谱牵斥吟哦渠庶介吭哧咯陈刚浓荡臊美闯案姘碎壅伏轧钢阿病魔憋讨馏坑悍贵余捆瘠浆吱淋派稿忧教坛花叱暴抬盼嘟赵报弥挨舟丑吊辫盛凶" +
+  "稽碑菜翻兵扰霓裳捻惯逼嫌裂缠癖四术听岁脉莎犍龙字揣碌炎碡体留壮告暮轨蛾股魂例架袅喃灯激户秤碾扳铅儒剪轴祸克持钟性绑唆洗墙喘乜斜幢圩套粗蔽嘀册絮浸抵卸春吡际苕糨展" +
+  "芫荽紧尿云艇评读殖叙阏冷男啕拥万乘选基谷房咿芥技诗酌青元茎巨榔喷香锁虾图灶婚洞忖党塔拱券馅哨烫挺括系羊矩菲蚧蜊怪临刨楚九谈雄遮周赚扒搀诚肚篓瘪痛福豪借妻宽绰戏绸" +
+  "缪摧缀朵恒浑锦信眉糕灰拌抖搂胜画螺频遗邮卦廊贾烙赔扑件删偷壁阴择唧溺咕砌熨筋棒傧镐卖弃群氓察绳影耕种栽垦豆启整足峦奶爸妈婶舅姑叔姨母姐哥妹娃孩狮嫂亭帽拍柱鸽摊牌" +
+  "鬼矮鸭屋兔骗猴嗓侄柿钳虱瓶豹筷篮耳茄蚌埠崆峒琵琶蘑菇葫芦狸盒桌竹傅袜杯刺猬鱼馄饨庄稼聪镜却朝霞夕翅臧否泰丈腐枞第之唯如其初闻私二五七又饼楼沧责患殉罹灾危避遇厄徇" +
+  "欢弯径歪阜肱仡佬么检董谋洛矶输脾江怎节暗响靠郎幕奈惠斯瞧纪岗甥堡礁燃烧劳摇滚桃闹癌瓦买癞脊梁英爵碰玻璃曳咏叹先灵黑锅彤祠哆嗦藻夜猫涂虫堰湖趵突泉奥河莲豁阵肺掷筒" +
+  "噜广猩宗怜吃汉呱常硬狗催泪雪敲犯土景羞姆侃丁捋众峡丝傻屎尥蹶罐澄赶鸡金齿耙饱槐尖宣缩砂密耍呓函纸努圆铆肩望坤考勤褂够搁酵渣嘣脆顶滴寸醋百功特郦码拜季戌针吉陀所烈" +
+  "尔欲米完仆继截御全毫掌深绝唉虑泣半十依恋神叽哩踏桑义勇歹辞疲走破涕千己旋尊优维吵向而喳锲泌腺险夷燎穷追已晚珍孟救蔚洁敢茅顿滑蹈辙骂履冰损拐像川梆举振旗奄噼啪凭富" +
+  "仁篇牍吹善纣虐嘁劫卫粮谀童骛远鹿谁立艾今蝇残乳臭狈奸惊蝉硕暇紫若窗净滥索歃盟奋躲熏牛乔掠衷垂范怀左右我姿滂沱佳操旧添砖座徒逸蟹忘寡屡互因此彼斩腹策冤鳞言廉耻绣纷" +
+  "卵近幼序娼悲欺霸睹啼饥疏寥哼鹤颜程虚翁跑崩坏朋比淡箪壶莺坐随就题肤穿毁纾丢脑袋牢贪浮呈祥榆邻壑必匕录悔幺训形迹傍嘘杀驴玩君逑德誓遄畏途沐姓圭臬邦窥嫁梧觅羽隐擢鞭" +
+  "斫雕锥椎饮飨冢屠窃严嗔拽啰街扶犁麻箸碗铸剑杼垣铢两悉侏朱轓皁昼诪幻焰啄裘擿埴稚婑媠至皂雁羹戈吾躬赭箭昭违湛恩汪濊搴造谣凿聚蹙锋镝殒恤舒桂鬻驽凤玉卮喧阗逾渔侵杅蠹" +
+  "智尤殢庸皦郢书斐儛绶犊墨龈溢抑磊倚闾讳升慎键筌瑱鉴寝移缕租税肥野瑶麽锐卬纚羔扬扢骏募秀驾越毂岱巢掞偃革轩妍蚩贱埙篪炫悬狟素飡揎袖熊跱腥匽权胁硝鸮鸣鼠株掘吏褱培琢" +
+  "挦撦习焉歙漆晰辨赋碔砆鹢蜡烛羖寇冬夏诬盗握透惟帷最篑虺弗歉蜮尘僄往渚汀贡亡贯肉愒蛙颓堑湿剸繁剧麞葵哺昏敛痌瘝抱停料唇恬遂胠箧谭狧穅搜岩宋斤筠蹄铄双柑炊逻辑黄束缊" +
+  "蒲脯椽茧螫腕释室匮袭裈尸圣贤挂埶厉揭陵仇蛇蝎乖赏苫讪嗑殽湋棁黍徙棬枢井焚洒彀汝耶登柔态戎劻勷辰熬诎桡腘凄绛阙倾肠螓琴瑟且餍巧弩聒凫贫陶竖岂綦溪跂棋齐诳普胸觚圜萍" +
+  "飘蓬帡杖烹炰鳖脍鲤庞皓攀柳蟾箫粉妆谊儗伦滓挠鴂贩奴眢忳鸟栖侔也脂砻镌棱刓效邈欿黾穴鸲绵材孑骸扪昧晨堕椟珠罗织构陷鸾由兽骥漏阑槛猿沼玄讬捧淬砺疮冕惧枯枘詈跖志惛让" +
+  "骍徼楞块潦琅嬛揆旷匡焦鹄唾抗峻阪倦倍浊鞠茂久蒸熯敬旌荆棘祲触籓跋疐矜饰津擘佯狂诘磝碻猱杰烂騃浇妖捉渐简俭葭莩从霁朗寄寓掎襼虮宾谗糜获杕铎晦盲舵潢髫璧驻裤荻枭鸠鸱" +
+  "卢雉腊鸿洪恨涸衡浩汤狠则裕端疑尚爽酸兰戴粒屦吻苟续钩锯翼待罢梦朔饩秣泽甘辅符勒愬粪楷吪封豨敷衍丰蔀沸侈源钧遏饿殍醉扼襟控峨屙颐遁堆盈棊杜默鹃笃秋兜窾扯鼎磷跌宕羁" +
+  "斑捣陪豺铗瓢璞沓踵厝啛慈纯局笋搨雀殊眦徐废趁晴疴倡畅苌弘碧卑傲昌禅沾榭踪蹑餐啖骖驷综卯酉衰疼薡蕫遑博糠髓骇彬摽梅飙敝秕谬鞍褐缨卧腮冯摘褒贬帮卿拔捱缉谓艰竭噩伽儆" +
+  "莠瑜瑕讽斠赞汽迎";
+
+const INITIALS =
+  "zgcwrzbfyqygzctgjdrwnczljclhszdlljhgmdxjsssftczxzdtzklhygzjnwtbwyyszzqdgdhtrzngj" +
+  "ghgswmjhhbdcycjgssyqnylyymgyshxbcpzxssllgjdsnqjxxxghhqssljgyjgjfftftjzxjhjdxnlpc" +
+  "tzxcjzscbjlfymyqbymszzplpzjskrfhdxsytdqnywyyhhsylmgjndyjdxbdpgnzzsbxcxxsdxhxfgbl" +
+  "qqsgbzszhsyxzqjjdbyrrgrhzkzjptlmzmsdjmwqqbqlzddddhcqgdlazdgkbssmslpswjsqznkbhyxl" +
+  "gamcsjqezzttmmkhbbqyczcycexdjygszyyxyhyhtfzjbssjpcfylyshszpsgpcmdsxysygsmlfbxsyq" +
+  "gjdmyjyclzwwzbjxlbqghlhhjcgddsdhkspymzdzcxjgfznjqslbtlmjpgqjjzaycdkpktwcpssgjqfe" +
+  "mxfzayjyfzxxdpstwscshmdldxzylbfzzjzfqqrxdjblycgxyscwbqyfmhcnhqjbsymxtzbtsfstsbhd" +
+  "zgnxhwycsxbnclygntwymsgcltwzjgdblmkcsdzhyxdhmqdlhcwjqldzdbqzszgzcflxbldqzzwwrglx" +
+  "pqykkytfpysgtjmfgswzhqsfsdpwxkxqjbczzdpjcnjldxpfqbjfpmjcsysxbgwjkbxfwxjzhqzswlkc" +
+  "ymxlhcjlbzkxjzbxzksjygzzyasdqgswnhbycryzjpyxnbhclhlnmlsldglcjzygjhcqkjnjmmtnrtcp" +
+  "kkyfczcsrbbgszxdymdqzzydlhlmtsjwltshqpdtdytzhfnzszddzcflzdhxzsqxzsmbxzswfyfyhdwl" +
+  "hjmxgdkjjcbwcchwwsmmrybcsdcjgjzymsjgtmcclmzcljstnyenwzdmzfxxclbrllylgjgdgtqwyjms" +
+  "msyctsrctxzbdswsgclapcstgypwccsldplptpstfwlyyxbyzflyyztmxtqxyhykzzzxcjdjbtzqpdsb" +
+  "thsjzolljfbbcbzjysypqcyoqsjkcgcgndsmcapsyfygabmbtlkhgykjjzlpgyjthcbtpdzbmazcdbsx" +
+  "jbcfbrnsngbxlcpsstsmsjlzclyztlzgmgeghljnndjhcnbqrjzhkczxbsxqcnxzxtcbdcxjdxcbjtjz" +
+  "ysjnytpdzxelntywcxjgfyjjszqyjjlpxsxtzhdcdtgqxsttkxyjfjlglpcjtxzzzbccdlbtfhjqkcxc" +
+  "mczdhhjxmghbdlshlpyygljlppjstbyzjngqyjbbhmqqmcsygzzkdqzzlnbmsjgsymjgmwhsstmpzgtp" +
+  "gaywtphszsqspbkleqbbkdppmghllhzzfwbcwyhtzjcjqcxxczftzfcdzwrqcwsewqyblczhxlzwbyex" +
+  "hwjwfgylmjdmljspjzjaxklmnhsqjgsbjrslygtnawmljlyjpblyytxlhgtcdszymtcyhbtqahlhzfzt" +
+  "lgxzlchgcygclxqftjxmkdlzxsssljgcgjjcpbhjxssmsyhznymjwkkqgggjzbcddccbgtlmbjxzjtsl" +
+  "eymwpjjyqhzsjalqbsylsjltsyydcpzptqjxzywcxezqmxxylqzywzmjwjgmdhdzmlbsgxcbjzqypppf" +
+  "rpdcsznqjwlytwylslajycrcbjjcsxzrcjlssmfdxnqlzcfhzywzptjcjtzztyxwglhycbzfcylylcxf" +
+  "ljyxcbqbdtjslhhycxwpbhpbddhyzsjtfchsdndltfcxylhbblhyxxjbxslwjqdscwtmxgnbkjwmyyzb" +
+  "zdzzyxztqyczljflmzwzjzyzlxzzfzzzhyzqtzzwdzzyggwgzjzwzewhqzyzjcfdyxsgynfyzxtyyqyd" +
+  "zytyjysfwsdmyyylylhssjqtjqylzsfyymralgygjmxjygdcyygxycjxcxxhscxxxzxyqxxxmszjlhpz" +
+  "xcxyxqxbfwfylzgkdxwdwtwwzkhfqycpwztgwgrkwtqstfjzkbhltgbtlctsqqttksysjytssgcljhsw" +
+  "ppcjswsskxkssxgyljlcsxgssskywzsxqsjfsgrydrtrkrcaqrgqjqqcqqsqyqngfptsqqxqqqkpxghp" +
+  "pppzppbklphplcxfzynlznjfnytnqmyzljlwxmkmxqmcjhmmcddzlzgxlysjllkyzxtpclcmjkrlzzhr" +
+  "xjlkllqkkkjhtkjbjbzjmjzhjjjjjcfbdjsjbykjaqnjlsjyzjjjjpcjljyjyjbcmhddhmdhtbzkdxjc" +
+  "lzlhhhhhhthzydysssldljwgxgjydbmsxmzgfflsfkefxfyfbfcyjeepzejkeeyddyqdmjdqdkcdlddj" +
+  "bdpcjpptzccccjstqszxfcqkccchbbacczxzncdcszmystddhbkshbbmbbbmahywsfzbbbqbajwjjejj" +
+  "yyxfjzqy";
+
+export const PINYIN_INITIAL: Record<string, string> = {};
+for (let i = 0; i < CHARS.length; i += 1) {
+  PINYIN_INITIAL[CHARS[i]] = INITIALS[i];
+}

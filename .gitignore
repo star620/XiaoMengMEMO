@@ -1,0 +1,31 @@
+# 依赖与构建产物
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+target-check/
+
+# 打包产物（安装包走 Releases，不进仓库）
+*.exe
+*.msi
+*.nsis.zip
+
+# 本地数据、密钥与日志
+*.log
+.env
+.env.*
+*.pfx
+*.p12
+tools/cert/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 调试截图（仓库里只保留 assets/screenshots 的样例图）
+.shots/
+.dsh-vision-router/
+# 字体源文件（25 MB，按 tools/build_font_subset.py 头部说明自行下载）
+tools/fonts/*.ttf

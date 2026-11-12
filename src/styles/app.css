@@ -1,0 +1,391 @@
+/* 小梦备忘录 · 通用布局与组件样式 —— 前端负责人维护
+   分工：tokens.css / paper.css（视觉）负责"长什么样"；
+   这里只放布局底座、跨组件共用的排版骨架，以及必须由 JS 状态驱动的样式。 */
+
+/* ==========================================================================
+   0. 窗口底座
+   窗口是透明的、无边框的，便签的纸和影子都画在 #app 里面。
+   ========================================================================== */
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  font-family: var(--xm-font-ui, "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif);
+  font-size: 13px;
+  color: var(--xm-ink, #3d2f12);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  /* 桌面上拖窗口时不要出现蓝色选区 */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#app {
+  position: relative;
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 只有真正要打字的地方允许选字 */
+input,
+textarea,
+[contenteditable="true"],
+[contenteditable="plaintext-only"],
+.xm-text {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ==========================================================================
+   1. 图标兜底
+   .xm-btn--icon 内是 100% 铺满（视觉已写）；普通文字按钮里的图标统一 14px。
+   SVG 来自 shared/icons.ts，本身不带 width/height，不兜底会撑成 300×150。
+   ========================================================================== */
+.xm-btn svg {
+  display: block;
+  flex: 0 0 auto;
+}
+.xm-btn:not(.xm-btn--icon) svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ==========================================================================
+   2. 便签正文：滚动
+   滚动层的 overflow / 渐隐 / box-sizing 全在 paper.css（视觉负责），
+   这里只留手势约定，绝不再写 .xm-sheet / .xm-todos / .xm-sheet__inner 的样式，
+   否则后加载的 app.css 会把视觉的滚动规则盖掉（待办曾因此完全滚不动）。
+   ========================================================================== */
+/* 正文区只允许纵向手势：横向留给选字、点纸面进编辑 */
+.xm-note__body {
+  touch-action: pan-y;
+}
+
+/* ==========================================================================
+   3. 召唤面板
+   ========================================================================== */
+/* 页脚：提示 + 数量，用一个小圆点隔开 */
+.xm-panel__count {
+  font-variant-numeric: tabular-nums;
+}
+.xm-panel__count:not(:empty)::before {
+  content: " · ";
+}
+
+/* 卡片上的提醒标记：小琥珀药丸，和标签区分开 */
+.xm-card__remind {
+  flex: 0 0 auto;
+  max-width: 92px;
+  overflow: hidden;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: rgba(217, 145, 43, 0.13);
+  box-shadow: inset 0 0 0 1px rgba(160, 110, 20, 0.2);
+  font-family: var(--xm-font-ui);
+  font-size: 9.5px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--xm-accent-ink);
+}
+
+/* 列表态正文固定两行（视觉基础样式是三行，这里收紧，卡片高度才整齐）；
+   用 min-height 把两行的高度先占住，空便签/短便签也不会比别的卡矮一截。 */
+.xm-panel__list .xm-card__text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  min-height: calc(2 * 1.62em);
+  overflow: hidden;
+}
+
+/* 卡片高度统一：标题/两行摘要/页脚 三段固定，卡片之间不再参差 */
+.xm-panel__list .xm-card {
+  display: flex;
+  flex-direction: column;
+}
+.xm-panel__list .xm-card__foot {
+  margin-top: auto;
+  padding-top: 5px;
+}
+
+/* 卡片 hover / 键盘选中态统一在 paper.css §11。
+   这里原本复制了一份日间态，app.css 又加载在 paper.css 之后，靠特异性把
+   paper 的基础态和夜间态一起压住，夜间面板因此出现过米白卡片；移到 paper 后
+   日间、夜间、选中三态都在同一个文件里按顺序生效，这里不再管视觉。 */
+
+/* 键盘选中卡片时给一圈明确的焦点环（hover 选中态由视觉的 [data-selected] 管） */
+.xm-card:focus-visible {
+  outline: 2px solid var(--xm-accent, #d9912b);
+  outline-offset: 1px;
+}
+
+/* 搜索框去掉系统自带的"×"（Esc 已经能清空，自带的叉在纸面上很突兀） */
+.xm-search::-webkit-search-cancel-button,
+.xm-search::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* ==========================================================================
+   3b. 待办的截止时间
+   ========================================================================== */
+/* 每条待办右侧的小按钮：没设时间时是淡淡的钟表，设了就显示“明天/11月12日”。
+   默认半透明，不抢待办文字的注意力。 */
+.xm-todo__due {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  font-family: var(--xm-font-ui);
+  font-size: 9.5px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--xm-ink-faint);
+  cursor: pointer;
+  opacity: 0.55;
+  transition:
+    opacity var(--xm-dur-quick) var(--xm-ease-out),
+    background-color var(--xm-dur-quick) linear,
+    color var(--xm-dur-quick) linear;
+}
+.xm-todo__due svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin: 0 auto;
+}
+.xm-todo__due:hover {
+  opacity: 1;
+  background: var(--xm-accent-soft);
+  color: var(--xm-accent-ink);
+}
+.xm-todo__due[data-set="1"] {
+  opacity: 1;
+  font-weight: 600;
+  color: var(--xm-accent-ink);
+}
+/* 已经过了截止时间：墨色加深，一眼看到（不引入新颜色，跟着纸色走） */
+.xm-todo__due[data-overdue="1"] {
+  color: var(--xm-ink-strong);
+}
+.xm-todo[data-done="1"] .xm-todo__due {
+  opacity: 0.3;
+  font-weight: 400;
+}
+.xm-todo[data-done="1"] .xm-todo__due[data-set="1"] {
+  text-decoration: line-through;
+}
+
+/* 截止时间弹层：位置由 JS 算（贴着当前这一行），这里只定宽和内部排版 */
+.xm-pop--due {
+  top: auto;
+  right: auto;
+  width: 210px;
+}
+.xm-pop--due .xm-pop__quick {
+  margin: 6px 0;
+}
+.xm-pop--due .xm-pop__row > .xm-field {
+  width: 100%;
+}
+.xm-pop--due .xm-pop__row:last-child {
+  justify-content: flex-end;
+}
+
+/* ==========================================================================
+   4. 设置页
+   ========================================================================== */
+/* 一行里并排的键帽（Ctrl + S 这种） */
+.xm-keys {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 引导里的按钮不被拉满整行 */
+.xm-settings .xm-row .xm-btn {
+  flex: 0 0 auto;
+}
+
+/* ==========================================================================
+   5. 提醒弹窗
+   ========================================================================== */
+/* 提醒内容是正文摘要：360x240 的小窗里时间是主角，
+   摘要最多两行（正文里换行多的便签也不会把按钮挤出纸外） */
+.xm-reminder__text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  max-height: 3.4em;
+  overflow: hidden;
+}
+/* ==========================================================================
+   6. 无边框纸窗（面板 / 设置 / 提醒的自绘窗口壳）
+   真正的纸感样式在视觉的 paper.css §17；这里只补"就算样式表加载顺序变了
+   也不会塌"的 flex 骨架，全部用 :where 把优先级压到 0，视觉随时能覆盖。
+   ========================================================================== */
+:where(.xm-chrome) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+:where(.xm-chrome__head) {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+:where(.xm-chrome__body) {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+:where(.xm-chrome__body > *) {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* 提醒窗内容按 344x195 排（标题条 token 24px，量到 22px 是亚像素差）：
+   摘要两行 + 按钮固定在右下。纸面高度由视觉 paper.css 的
+   .xm-chrome__body > .xm-reminder > .xm-reminder__paper { height:100% } 决定，这里不重复设。 */
+.xm-chrome[data-surface="reminder"] .xm-reminder__actions {
+  gap: 8px;
+}
+/* 设置页/面板的内页已经去掉圆角，纸窗负责外轮廓；这里只保证内容不被圆角切到 */
+.xm-chrome__body > .xm-settings,
+.xm-chrome__body > .xm-panel {
+  border-radius: 0;
+}
+
+/* 窗口正在收起（见 shared/chrome.ts 的 data-closing）：别再接受点击 */
+.xm-chrome[data-closing="1"] {
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   7. 修改记录（便签菜单 → 修改记录）
+   头部换成「修改记录 + 便签字 + 返回」，列表复用 .xm-card 的纸卡样式。
+   ========================================================================== */
+.xm-panel__head[hidden],
+.xm-panel__actions[hidden],
+.xm-history__bar[hidden] {
+  display: none;
+}
+.xm-history__bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+.xm-history__titles {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.xm-history__title {
+  font-family: var(--xm-font-hand);
+  font-size: 19px;
+  line-height: 1.2;
+  color: var(--xm-ink);
+}
+.xm-history__note {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--xm-ink-soft);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.xm-history__note:empty {
+  display: none;
+}
+.xm-history__bar .xm-btn {
+  flex: 0 0 auto;
+}
+.xm-panel__list.xm-history .xm-history__card {
+  cursor: pointer;
+}
+.xm-history__card .xm-card__head {
+  align-items: center;
+}
+.xm-history__card .xm-card__foot {
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.xm-history__time {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.xm-history__chars {
+  flex: 0 0 auto;
+}
+.xm-history__title {
+  overflow: hidden;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.xm-history__restore {
+  flex: 0 0 auto;
+}
+.xm-history__empty small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--xm-ink-faint);
+}
+/* 菜单里的「修改记录」整行按钮：图标 + 文字 */
+.xm-pop__item--history {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.xm-pop__item--history svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  opacity: 0.8;
+}
+
+/* ==========================================================================
+   8. 三档尺寸缩放：动画期间只有正文轻微模糊
+   窗口宽度/高度由 Rust 端 220ms 动画完成，前端在 250ms 内膜一层很轻的模糊，
+   把重排的瞬间糊过去；动画结束由 sticky.ts 移除 data-resizing。
+   用户反馈过「便签和菜单一起抽搐」：之前连标题/页脚一起模糊（2.6px），
+   图钉按钮和页脚在窗口边缘跟着糊、跟着缩放，看起来像整块在抖。
+   现在只糊正文区（.xm-note__body），标题、工具条、页脚、弹出菜单全部保持清晰锐利。
+   这里不加 transition：body/foot 在纸面样式里已有收起渐变过渡，别互相覆盖。
+   ========================================================================== */
+.xm-note[data-resizing="1"] .xm-note__body {
+  filter: blur(1.6px);
+}
+/* 工具条与弹出菜单：缩放期间既不许糊，也不许有任何位移/过渡，
+   菜单是"贴在纸上的另一张纸"，窗口怎么动它都只跟着定位、不自己漂。 */
+.xm-note[data-resizing="1"] .xm-note__tools,
+.xm-note[data-resizing="1"] .xm-pop {
+  filter: none;
+  opacity: 1;
+  transform: none;
+  transition: none;
+}

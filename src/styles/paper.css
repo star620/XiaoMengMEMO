@@ -1,0 +1,4731 @@
+/* ==========================================================================
+   小梦备忘录 · 纸面与动效 paper.css
+   风格 A：暖黄便利贴 · 纯纸面（无格线）
+
+   这份文件负责"看起来像一张真的便签"：纸面渐变 / 纸纹 / 边缘厚度 /
+   多层投影 / 折角 / 手写排版 / 滚动纸边渐隐 / 面板卡片 / 设置开关 /
+   提醒弹窗 / 版本层 / 随身笔记 / 差异视图 / 夜间纸色 / 各种动效。
+   全部是纯 CSS + 内联 SVG 生成，没有图片文件、没有网络字体；
+   滚动状态、字号缩放、夜间主题由 JS 在根节点写 data-* 与 CSS 变量。
+
+   章节目录（按顺序读，数字即节号）：
+   §1 便签外壳   §2 纸面   §3 顶部   §4 正文区   §4.1 滚动层
+   §5 待办   §6 滚动纸感   §7 页脚 / toast   §8 按钮   §9 便签内弹层
+   §10 面板   §11 卡片   §12 设置   §13 提醒   §14 关键帧
+   §15 滚动条   §16 减少动效   §17 无边框纸窗   §18 Markdown
+   §19 收起 / 锁定 / 高亮   §20 版本层   §21 随身笔记   §22 差异视图
+   §23 筛选条   §24 快速记录   §25 待办拖拽   §26 夜间纸色
+   §27 历史兼容别名（下一版删）
+
+   颜色、字体、时长等「值」都在 tokens.css，这里只负责「怎么画」。
+   ========================================================================== */
+
+/* ==========================================================================
+   1. 便签外壳 .xm-note
+   --------------------------------------------------------------------------
+   窗口是 320x380 的小窗。纸面要稍微歪一点、还要有投影，
+   所以外壳留一圈内边距给"旋转出来的角"和"影子"。
+   ========================================================================== */
+.xm-note {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 5px 6px 8px; /* 纸铺满窗口，只给轻微倾斜留一点余地（原来的 10px 会在浅色壁纸上显出一圈白边） */
+  font-family: var(--xm-font-ui);
+  font-size: 13px;
+  color: var(--xm-ink);
+  -webkit-user-select: none;
+  user-select: none;
+  /* 拖拽区里的文字不要被选中，否则拖动会变蓝 */
+  -webkit-tap-highlight-color: transparent;
+
+  /* ---------- 字号缩放 ----------
+     --xm-font-scale 是前端写在便签根上的内联样式（1.0 / 1.15 / 1.3），
+     但 :root 上的 --xm-font-base 在被继承下来之前就已经算死成 16px 了，
+     所以正文/待办永远不变，只有直接写 calc(18px * scale) 的标题会跟着变。
+     解决办法：在便签作用域里用当前的 --xm-font-scale 重新算一次派生字号，
+     便签内所有用 var(--xm-font-base) 的地方就都随档位缩放。 */
+  --xm-font-base: calc(16px * var(--xm-font-scale));
+}
+
+/* 便签的入场动画挂在纸面 .xm-note__paper 上（见第 2 节）：
+   纸面自己带 rotate(var(--xm-rot))，如果外壳上也转一次，两层旋转会叠成 2 倍。 */
+
+/* ==========================================================================
+   2. 纸面 .xm-note__paper —— 最重要的一层
+   --------------------------------------------------------------------------
+   纸不是一块黄色矩形，而是"五层叠出来的"：
+     ① 斜向主渐变       —— 光从左上来，右下偏深
+     ② 极细纤维条纹     —— 借鉴牛皮纸的纤维感，非常淡
+     ③ SVG 噪点纸纹     —— feTurbulence 生成的随机颗粒（用 soft-light 混色，不发灰）
+     ④ 顶部受光边       —— 纸的上边缘被光打亮
+     ⑤ 底部内阴影       —— 纸有厚度，下缘略暗
+   再叠上：1px 内描边、多层外投影、轻微倾斜、右下折角。
+   ========================================================================== */
+.xm-note__paper,
+.xm-reminder__paper {
+  position: relative;
+  box-sizing: border-box;
+  border-radius: var(--xm-radius);
+  background-color: var(--xm-paper-a);
+  background-image:
+    /* ④ 顶部受光边：最上面约 12% 高度有一层非常淡的白 */
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 12%),
+    /* ⑤ 底部内阴影：下缘压暗，制造纸的厚度 */
+    linear-gradient(0deg, rgba(146, 108, 16, 0.14) 0%, rgba(146, 108, 16, 0) 16%),
+    /* ③ 纸纹噪点（soft-light 混色 → 只加颗粒感，不会让纸变灰变脏） */
+    var(--xm-tex),
+    /* ② 纤维：极淡的斜向细纹 */
+    repeating-linear-gradient(96deg, rgba(120, 86, 18, 0.045) 0 1px, rgba(120, 86, 18, 0) 1px 6px),
+    /* ① 主渐变：暖黄从亮到深 */
+    linear-gradient(
+      158deg,
+      var(--xm-paper-a) 0%,
+      var(--xm-paper-b) 32%,
+      var(--xm-paper-c) 74%,
+      var(--xm-paper-d) 100%
+    );
+  background-blend-mode: normal, normal, soft-light, normal, normal;
+  box-shadow: var(--xm-paper-shadow);
+  /* 轻微倾斜：摆得太正反而假；hover 时不要再改这个 transform，否则会抖 */
+  transform: rotate(var(--xm-rot));
+  /* M3 便签入场「纸落下」：从略高、更歪一点落回纸面。
+     动画直接跑在纸面元素上，rotate 的终点就是上面这行的 --xm-rot，
+     和外壳的旋转不存在"两层叠加"的问题。 */
+  animation: xm-note-in var(--xm-dur-in) var(--xm-ease-out) backwards;
+  transition: box-shadow var(--xm-dur-quick) var(--xm-ease-out);
+}
+
+/* 鼠标移上来：纸像被"拿起来看"了一点点——只有影子变深，没有位移，不会抖 */
+.xm-note:hover .xm-note__paper {
+  box-shadow: var(--xm-paper-shadow-hover);
+}
+
+/* 正在写：内圈更亮、描边带一点琥珀色，像笔尖把纸压住了 */
+.xm-note[data-editing="1"] .xm-note__paper {
+  box-shadow: var(--xm-paper-shadow-edit);
+}
+
+/* 置顶的便签：内描边亮一档，一眼能看出来它被钉在桌面最上面 */
+.xm-note[data-pinned="1"] .xm-note__paper {
+  box-shadow:
+    inset 0 0 0 1px rgba(196, 146, 36, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    /* G2：左右各一条 1px 内侧暗线，纸的左右边也有厚度 */
+    inset 1px 0 0 rgba(120, 88, 20, 0.07),
+    inset -1px 0 0 rgba(120, 88, 20, 0.12),
+    inset 0 -14px 22px -16px rgba(140, 100, 20, 0.22),
+    /* G1：暖色双层投影（近实影 + 远柔影），和纸面默认态同一套暖褐 */
+    0 2px 3px rgba(120, 90, 30, 0.24),
+    0 14px 30px -8px rgba(120, 90, 30, 0.33);
+}
+
+/* ---------- 便签专用内边距（顶部 30px：让出 26px 的拖动条） ---------- */
+.xm-note__paper {
+  width: 100%;
+  height: 100%;
+  padding: 30px 16px 10px;
+  display: flex;
+  flex-direction: column;
+  /* 子元素都压在折角之上，文字不会被折角盖住 */
+  isolation: isolate;
+}
+
+/* ---------- 右下角折角（纯造型：纸被掀起的一角，不再表示还有下一页） ---------- */
+/* 只用 ~34px 的一小块，且 pointer-events:none，绝对不挡点击。
+   用 clip-path 裁出三角形，再用 drop-shadow 在斜边投一道阴影——
+   这样阴影会"跟着斜边走"，而不是沿着外接方形的边，看起来才像纸真的折起来了。
+   ：它在滚动版本里只是装饰，滚动到底也不多做任何暗示。 */
+.xm-note__paper::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 34px;
+  height: 34px;
+  pointer-events: none;
+  z-index: 3;
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+  background: linear-gradient(
+    225deg,
+    #e9cc46 0%,
+    #ffec93 38%,
+    var(--xm-paper-back) 72%,
+    #fffdf4 100%
+  );
+  filter: drop-shadow(-2px -2px 3px rgba(110, 82, 14, 0.24));
+  border-bottom-right-radius: var(--xm-radius);
+}
+
+/* ---------- 2.6 换色交叉淡入 .xm-colorfade ----------
+   前端点色点时，把"旧颜色"的 4 个纸色变量内联写到这个覆盖层上，
+   插进 .xm-note__paper 里再切 data-color，然后让覆盖层 200ms 淡出：
+   旧纸色慢慢褪、下面的新纸色慢慢透出来，像换了一张纸而不是闪一下。
+
+   层级：纸面渐变/纸纹/噪点都是 .xm-note__paper 自己的 background，
+   文字则是它的子元素。要"盖住纸纹、又不盖住字"，覆盖层用 z-index:-1：
+   在隔离出来的层叠上下文里，负层级画在元素背景之上、普通子元素（文字）之下。
+   pointer-events:none，绝不挡点击。 */
+.xm-colorfade {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(
+    160deg,
+    var(--xm-paper-a) 0%,
+    var(--xm-paper-b) 38%,
+    var(--xm-paper-c) 74%,
+    var(--xm-paper-d) 100%
+  );
+  /* 只过渡透明度：前端把 opacity 从 1 放到 0，再移除节点 */
+  transition: opacity 0.2s ease-out;
+  will-change: opacity;
+}
+
+/* ==========================================================================
+   3. 顶部：拖动条 / 标题 / 三个图标按钮
+   ========================================================================== */
+
+/* 窗口拖动区：高 26px，透明，只负责"抓住窗口拖走" */
+.xm-note__drag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 26px;
+  z-index: 4;
+  cursor: move;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.xm-note__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 24px;
+  margin-bottom: 5px;
+}
+
+/* 标题：手写体、无边框、背景透明（写完就像直接写在纸上） */
+.xm-note__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 高度/行高跟着字号一起长（§12.9）：只放大字号不改行高，1.3 档标题会被 input 上下裁掉 */
+  height: calc(28px * var(--xm-font-scale));
+  padding: 0 2px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  /* 标题用界面字体（霞鹜文楷），比正文大一档并加粗：一眼看出这是标题 */
+  font-family: var(--xm-font-ui);
+  font-size: calc(20px * var(--xm-font-scale));
+  font-weight: 700;
+  line-height: calc(28px * var(--xm-font-scale));
+  letter-spacing: 0.3px;
+  color: var(--xm-ink-strong, var(--xm-ink));
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.45);
+  -webkit-user-select: text;
+  user-select: text;
+}
+.xm-note__title::placeholder {
+  color: var(--xm-ink-soft);
+  font-weight: 400;
+  opacity: 0.72;
+}
+
+/* 随身笔记（kind=vault）没有标题这一行：它的内容按「名字 / 内容 / 备注」组织，
+   留着标题输入框只会常驻一个「标题」占位符，像一张没填完的表单，反而干扰。
+   隐藏标题后，右上角三个图标 (pin/remind/menu) 会失去左边的 flex 伙伴而滑到左侧，
+   所以给工具区 margin-left:auto 把它顶回原来的右边；head 的 min-height 24px
+   仍然撑着高度，图标的垂直位置和隐藏前完全一样。 */
+.xm-note[data-kind="vault"] .xm-note__title {
+  display: none;
+}
+.xm-note[data-kind="vault"] .xm-note__tools {
+  margin-left: auto;
+}
+
+/* 右上角三个工具按钮 */
+.xm-note__tools {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  opacity: 0.72;
+  transition: opacity var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-note:hover .xm-note__tools,
+.xm-note[data-editing="1"] .xm-note__tools {
+  opacity: 1;
+}
+.xm-note__tools .xm-btn--icon {
+  width: 22px;
+  height: 22px;
+  padding: 3.5px;
+  border-radius: 6px;
+}
+
+/* ---------- 置顶图钉「按下去」 ----------
+   只转图标、不转按钮底：按钮 hover 时那块淡白纸是正的，
+   图钉歪过来才有"被按进纸里"的感觉。 */
+.xm-note [data-act="pin"] svg {
+  transition: transform 0.2s var(--xm-ease-spring);
+}
+.xm-note[data-pinned="1"] [data-act="pin"] svg {
+  transform: rotate(-14deg) scale(1.08);
+}
+/* 按下时整个按钮缩一下，图标保持已经转好的角度 */
+.xm-note [data-act="pin"]:active {
+  transform: scale(0.86);
+  transition: transform var(--xm-dur-quick) var(--xm-ease-out);
+}
+
+/* ==========================================================================
+   4. 正文区 .xm-note__body —— 正文的"纸面视口"
+   --------------------------------------------------------------------------
+   高度 = 纸面高度 - 标题 - 页脚。正文不分页、不翻页；
+   内容超出时由里面的滚动层滚动（memo 是 .xm-sheet，todo 是 .xm-todos），
+   __body 自己不滚动、不裁切，窗口 320x380 兜住最外层溢出。
+   ========================================================================== */
+.xm-note__body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* 不裁切、不滚动：滚动交给里面的正文层，这里的溢出由窗口兜住 */
+  overflow: visible;
+  /* G2 纸边压暗：上下由 ::before/::after 做 3px 渐变（见 §6），
+     左右只补两条极淡的 1px 内侧暗线，让正文不贴边发脏。
+     墨色只有 5%~7%，不会压低文字对比度。 */
+  box-shadow:
+    inset 1px 0 0 rgba(120, 88, 20, 0.055),
+    inset -1px 0 0 rgba(120, 88, 20, 0.07);
+}
+
+/* ---------- 4.1 正文滚动层（memo: .xm-sheet / todo: .xm-todos） ---------- */
+/* ：只能有一个滚动层——memo 滚 .xm-sheet，todo 滚 .xm-todos。
+
+   为什么用 mask 做渐隐，而不是盖一层纸色渐变：
+   盖渐变是在字上抹一层纸，纸纹对不上就像一块糊掉的污渍；
+   mask 是让字本身在纸边处逐渐透明，下面的纸纹原样透出来，
+   才像"内容沉到纸边下面"。渐隐高度由 --xm-edge-top / -bottom 控制，
+   这两个变量要能过渡，所以先用 @property 注册（不支持就跳变，不影响可用）。 */
+@property --xm-edge-top {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --xm-edge-bottom {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+/* 选择器多带一级 .xm-note：app.css 在 paper.css 之后加载，前端那边只要还剩一条
+   同名的 `.xm-todos { overflow: visible }`（哪怕是早期的兜底），就会把这里的
+   overflow 整条盖掉、待办列表再也滚不动。带上便签根只多一级特异性，谁后加载都不怕。 */
+.xm-note .xm-sheet,
+.xm-note .xm-todos,
+.xm-note .xm-vault {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* 内边距算在高度里：正文层有 min-height:100% + 上下 padding，
+     用默认的 content-box 会让只有一行字的便签也凭空多出 5px 可滚距离（假滚动） */
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* 滚到头不再把滚动"传"给外层窗口，否则滚过头整张便签会弹一下 */
+  overscroll-behavior: contain;
+  /* 原生滚动条一律隐掉：320 宽的小窗里，滚动条比正文还抢眼 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0) 0,
+    rgba(0, 0, 0, 1) var(--xm-edge-top, 0px),
+    rgba(0, 0, 0, 1) calc(100% - var(--xm-edge-bottom, 0px)),
+    rgba(0, 0, 0, 0) 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0) 0,
+    rgba(0, 0, 0, 1) var(--xm-edge-top, 0px),
+    rgba(0, 0, 0, 1) calc(100% - var(--xm-edge-bottom, 0px)),
+    rgba(0, 0, 0, 0) 100%
+  );
+  transition:
+    --xm-edge-top var(--xm-dur-edge) var(--xm-ease-out),
+    --xm-edge-bottom var(--xm-dur-edge) var(--xm-ease-out);
+}
+.xm-sheet::-webkit-scrollbar,
+.xm-todos::-webkit-scrollbar,
+.xm-vault::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* memo 正文：楷体、行距 1.6 倍，像手写 */
+.xm-sheet__inner.xm-text {
+  /* 同上：min-height:100% 和 padding 一起算，短便签 1 行字时也不会多出 5px 滚动 */
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 1px 2px 4px;
+  font-family: var(--xm-font-hand);
+  font-size: var(--xm-font-base);
+  line-height: 1.8; /* 方案 B：楷体在 1.6 行距下发闷，放宽到 1.8 更像手写 */
+  letter-spacing: 0.2px;
+  color: var(--xm-ink);
+  /* 装饰性文字阴影：极淡的一层白，让笔画看起来"压在纸纤维上" */
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  /* 回填正文是 textContent，必须保留换行符，否则回车换的行会被折回上一行 */
+  white-space: pre-wrap;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* memo 空内容时的占位文字（淡墨色，像铅笔轻轻写的一行提示） */
+.xm-sheet__inner.xm-text:empty::before {
+  content: attr(data-placeholder);
+  display: block;
+  color: var(--xm-ink-soft);
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+/* 输入类控件统一：去掉浏览器默认外观 */
+.xm-note input,
+.xm-note textarea {
+  font-family: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* 光标颜色：琥珀色，在暖黄纸上更清楚 */
+.xm-note input,
+.xm-note textarea,
+.xm-sheet__inner {
+  caret-color: var(--xm-accent-ink);
+}
+
+/* ==========================================================================
+   5. 待办清单 .xm-todos
+   ========================================================================== */
+.xm-todos {
+  list-style: none;
+  margin: 0;
+  padding: 2px 2px 4px;
+  font-family: var(--xm-font-hand);
+  font-size: var(--xm-font-base);
+  line-height: 1.7;
+  color: var(--xm-ink);
+}
+
+/* 一行待办 */
+.xm-todo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 2px;
+  border-radius: 5px;
+  transition: background-color var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-todo:hover {
+  background: rgba(255, 255, 255, 0.36);
+}
+
+/* ---------- 手绘感复选框 ---------- */
+/* 为什么这么写：真的便利贴上，框是用笔随手画的，
+   所以边框粗细不完全均匀、四角半径各不相同、整体还会歪一点点。 */
+.xm-todo__check {
+  position: relative;
+  /* 复选框跟着字号一起放大，1.3 档时不会缩在大字旁边 */
+  flex: 0 0 calc(17px * var(--xm-font-scale));
+  width: calc(17px * var(--xm-font-scale));
+  height: calc(17px * var(--xm-font-scale));
+  margin: calc(3px * var(--xm-font-scale)) 0 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.12));
+  border: 1.6px solid var(--xm-check);
+  /* 四个角半径不一样 → 一眼看出是手画的 */
+  border-radius: 3px 2px 3.5px 2px / 2px 3.5px 2px 3px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4), 0 1px 1px rgba(120, 90, 20, 0.12);
+  transform: rotate(-0.8deg);
+  transition:
+    transform var(--xm-dur-quick) var(--xm-ease-spring),
+    background-color var(--xm-dur-quick) var(--xm-ease-out),
+    border-color var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-todo__check:hover {
+  transform: rotate(-0.8deg) scale(1.06);
+}
+
+/* 勾（内联 SVG 的 path）：未勾选时用 stroke-dashoffset 把线藏起来 */
+.xm-todo__check svg {
+  width: calc(12px * var(--xm-font-scale));
+  height: calc(12px * var(--xm-font-scale));
+  display: block;
+  overflow: visible;
+}
+.xm-todo__check svg path {
+  fill: none;
+  stroke: var(--xm-accent-ink);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 26;
+  stroke-dashoffset: 26;
+  /* 勾选 = 一笔画出来（0.2s） */
+  transition: stroke-dashoffset 0.2s var(--xm-ease-out);
+}
+
+/* 勾选后的框：颜色变实、微微缩小，像被笔压实了 */
+.xm-todo[data-done="1"] .xm-todo__check {
+  background: var(--xm-accent-soft);
+  border-color: var(--xm-accent-ink);
+  transform: rotate(-0.8deg) scale(0.94);
+}
+.xm-todo[data-done="1"] .xm-todo__check svg path {
+  stroke-dashoffset: 0;
+}
+
+/* ---------- 待办文字 ---------- */
+.xm-todo__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 行高/高度跟着基准字号走（16px 时仍是 27px = 1.6875 倍）：
+     §12.9 要求 1.3 档待办文字不被上下裁掉，不能再写死 27px。 */
+  height: calc(var(--xm-font-base) * 1.6875);
+  padding: 0 2px;
+  font-family: var(--xm-font-hand);
+  font-size: var(--xm-font-base);
+  line-height: 1.6875;
+  color: var(--xm-ink);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.45);
+  /* M1 待办划线生长：
+     待办文字是 <input>，而伪元素在 input 这类替换元素上根本不会渲染，
+     所以换成"背景里的一条 1.4px 横线 + background-size 从 0 长到 100%"——
+     视觉上一样是从左往右长出来，160ms，跟 0.2s 的画勾同步。 */
+  background-image: linear-gradient(var(--xm-strike), var(--xm-strike));
+  background-repeat: no-repeat;
+  background-position: left 50%;
+  background-size: 0 1.4px;
+  transition:
+    background-size 0.16s var(--xm-ease-out),
+    color var(--xm-dur-quick) var(--xm-ease-out),
+    opacity var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-todo__text::placeholder {
+  color: var(--xm-ink-soft);
+  opacity: 0.8;
+}
+
+/* 完成态：文字变淡 + 横线从左往右长出来
+   （不再用 text-decoration：它只能瞬间出现，做不了生长动画） */
+.xm-todo[data-done="1"] .xm-todo__text {
+  color: var(--xm-ink-soft);
+  opacity: 0.82;
+  /* 线的长度 = 输入框的内容宽。完成时让 input 按内容收缩，
+     线正好压在字上；不收缩的话线会一直拉到行尾，像一条分隔线。
+     Chrome 105+ 支持 field-sizing，老引擎上退化成整行线（可接受）。 */
+  field-sizing: content;
+  flex: 0 1 auto;
+  max-width: 100%;
+  margin-right: auto;
+  background-size: 100% 1.4px;
+}
+
+/* 删除按钮：平时藏着，鼠标移到这一行才出现 */
+.xm-todo__del {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--xm-ink-soft);
+  font-family: var(--xm-font-ui);
+  font-size: 14px;
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.86);
+  transition: opacity var(--xm-dur-quick) var(--xm-ease-out), transform var(--xm-dur-quick) var(--xm-ease-spring), background-color var(--xm-dur-quick) linear;
+}
+.xm-todo:hover .xm-todo__del,
+.xm-todo__del:focus-visible {
+  opacity: 1;
+  transform: none;
+}
+.xm-todo__del:hover {
+  background: rgba(190, 70, 50, 0.14);
+  color: #9c3b25;
+}
+
+/* "＋ 新待办" 那一行：只有占位提示，不加框 */
+.xm-todo--new {
+  margin-top: 1px;
+}
+.xm-todo--new .xm-todo__text {
+  color: var(--xm-ink-soft);
+}
+.xm-todo--new:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* ==========================================================================
+   6. 滚动时的纸感 —— 纸边渐隐 / 纸张厚度暗示
+   --------------------------------------------------------------------------
+   便签不再翻页。内容超出时在正文层里滚动，靠三件事让它
+   仍然"像一张纸"，而不是一个网页里的滚动列表：
+
+     a) 上/下纸边渐隐：靠 .xm-sheet / .xm-todos 的 mask 实现（见 4.1），
+        滚到顶部就没有上渐隐、滚到底就没有下渐隐，由便签根的 data-scroll 驱动；
+     b) 纸边厚度：__body 上下各一条 3px 的极淡暗边，可滚动时才淡入，
+        像纸被翻起来时边缘投下的那道细影；
+     c) 渐隐与暗边长度的过渡都 ≤160ms，且只动 opacity / 自定义长度变量，
+        不触发大面积重绘。
+
+   前端只做一件事：在便签根维护 data-scroll="top|middle|bottom"
+   与 class is-scrollable，别的交给这里。
+   ========================================================================== */
+
+/* ---------- 6.1 三种滚动位置：谁该渐隐 ---------- */
+/* 默认（不可滚动 / 没有 data-scroll）：上下都不渐隐，纸是平的 */
+.xm-sheet,
+.xm-todos,
+.xm-vault {
+  --xm-edge-top: 0px;
+  --xm-edge-bottom: 0px;
+}
+
+/* 滚到顶：上面已经没有内容了，只压下边 */
+.xm-note[data-scroll="top"] .xm-sheet,
+.xm-note[data-scroll="top"] .xm-todos,
+.xm-note[data-scroll="top"] .xm-vault {
+  --xm-edge-top: 0px;
+  --xm-edge-bottom: var(--xm-edge-fade);
+}
+
+/* 滚在中间：上下都有内容藏在外头，两头都渐隐 */
+.xm-note[data-scroll="middle"] .xm-sheet,
+.xm-note[data-scroll="middle"] .xm-todos,
+.xm-note[data-scroll="middle"] .xm-vault {
+  --xm-edge-top: var(--xm-edge-fade);
+  --xm-edge-bottom: var(--xm-edge-fade);
+}
+
+/* 滚到底：只压上边，下边让最后一行干干净净地落到纸边 */
+.xm-note[data-scroll="bottom"] .xm-sheet,
+.xm-note[data-scroll="bottom"] .xm-todos,
+.xm-note[data-scroll="bottom"] .xm-vault {
+  --xm-edge-top: var(--xm-edge-fade);
+  --xm-edge-bottom: 0px;
+}
+
+/* ---------- 6.2 纸边厚度：上下各一道 3px 的暗边 ---------- */
+/* 放在 __body 上（不是滚动层上）：滚动层有 mask，贴在它边上的阴影会被一起遮掉；
+   __body 不滚动、不遮罩，这道影才能稳稳贴住纸边。 */
+.xm-note__body::before,
+.xm-note__body::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  height: 3px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--xm-dur-edge) var(--xm-ease-out);
+}
+/* 上边缘：从纸边往下由深到无 */
+.xm-note__body::before {
+  top: 0;
+  background: linear-gradient(180deg, rgba(94, 70, 22, 0.17), rgba(94, 70, 22, 0));
+}
+/* 下边缘：从纸边往上由深到无 */
+.xm-note__body::after {
+  bottom: 0;
+  background: linear-gradient(0deg, rgba(94, 70, 22, 0.19), rgba(94, 70, 22, 0));
+}
+/* 只有"那边还藏着内容"时才淡入 */
+.xm-note.is-scrollable[data-scroll="middle"] .xm-note__body::before,
+.xm-note.is-scrollable[data-scroll="bottom"] .xm-note__body::before {
+  opacity: 1;
+}
+.xm-note.is-scrollable[data-scroll="middle"] .xm-note__body::after,
+.xm-note.is-scrollable[data-scroll="top"] .xm-note__body::after {
+  opacity: 1;
+}
+
+/* 系统设置里关掉动画时：渐隐与暗边都直接切换，不做过渡 */
+@media (prefers-reduced-motion: reduce) {
+  .xm-sheet,
+  .xm-todos,
+  .xm-vault {
+    transition: none;
+  }
+  .xm-note__body::before,
+  .xm-note__body::after {
+    transition: none;
+  }
+}
+
+/* ==========================================================================
+   7. 页脚 / 轻提示
+   ========================================================================== */
+.xm-note__foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  /* 右边留 24px：避开右下折角，文字不会被盖住 */
+  /* 上内边距收到 3px、页脚字号略放大：正文末行到窗口底部不留空档 */
+  padding: 3px 24px 0 2px;
+  font-family: var(--xm-font-ui);
+  /* 页脚/字数也跟字号缩放（§12.9），否则 1.3 档正文很大、页脚还是小字 */
+  font-size: calc(12px * var(--xm-font-scale));
+  letter-spacing: 0.2px;
+  color: var(--xm-ink-meta);
+}
+.xm-note__meta {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* 时间戳（"3 分钟前保存"）用 meta 墨色：比正文淡，但离远了也看得清 */
+  font-size: calc(13px * var(--xm-font-scale));
+  color: var(--xm-ink-meta);
+}
+
+/* 轻提示（已保存 / 已置顶…）：从下方滑入再淡出 */
+.xm-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  z-index: 30;
+  padding: 6px 13px;
+  border-radius: 9px;
+  background: linear-gradient(152deg, rgba(255, 253, 242, 0.97), rgba(255, 246, 214, 0.95));
+  color: var(--xm-ink);
+  font-family: var(--xm-font-ui);
+  font-size: 11.5px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px rgba(150, 116, 30, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 2px 6px rgba(96, 70, 14, 0.18),
+    0 10px 20px -6px rgba(96, 70, 14, 0.24);
+  opacity: 0;
+  transform: translate(-50%, 8px) scale(0.98);
+  transition:
+    opacity var(--xm-dur-in) var(--xm-ease-out),
+    transform var(--xm-dur-in) var(--xm-ease-spring);
+}
+.xm-toast[data-show="1"] {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+
+/* ==========================================================================
+   8. 按钮 .xm-btn
+   ========================================================================== */
+.xm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  /* 次按钮统一是"描边风格"：1px 深墨（20%）细边 + 淡淡的纸底，
+     按下时有凹陷反馈。不再用"半透明白块"，免得和暖黄纸糊在一起。 */
+  border: 1px solid rgba(81, 68, 35, 0.2);
+  border-radius: var(--xm-radius-sm);
+  font-family: var(--xm-font-ui);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  color: var(--xm-ink);
+  cursor: pointer;
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.34));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 1px 2px rgba(96, 70, 14, 0.1);
+  transition:
+    transform var(--xm-dur-quick) var(--xm-ease-out),
+    box-shadow var(--xm-dur-quick) var(--xm-ease-out),
+    background-color var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-btn:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.34));
+  box-shadow:
+    inset 0 0 0 1px rgba(120, 90, 20, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 3px 7px rgba(96, 70, 14, 0.16);
+}
+.xm-btn:active {
+  transform: translateY(0);
+  box-shadow:
+    inset 0 0 0 1px rgba(120, 90, 20, 0.26),
+    inset 0 2px 3px rgba(96, 70, 14, 0.16);
+}
+.xm-btn:focus-visible {
+  outline: 2px solid var(--xm-accent);
+  outline-offset: 2px;
+}
+
+/* 主按钮：饱和的琥珀色 + 轻投影，像一块"小纸签"压在纸面上。
+   文字用深琥珀墨（不是白字）——白字在暖黄上对比不够。 */
+.xm-btn--primary {
+  border-color: rgba(140, 88, 8, 0.5);
+  color: #3a2506;
+  background: linear-gradient(160deg, #f3b445 0%, #e59b22 54%, #d1830f 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 2px 5px rgba(150, 95, 10, 0.3);
+}
+.xm-btn--primary:hover {
+  background: linear-gradient(160deg, #f7c159 0%, #eba62c 54%, #d78b17 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    0 4px 10px rgba(150, 95, 10, 0.34);
+}
+.xm-btn--primary:active {
+  box-shadow:
+    inset 0 2px 4px rgba(120, 70, 0, 0.24),
+    0 1px 2px rgba(150, 95, 10, 0.28);
+}
+
+/* 图标按钮：只有图标，hover 时浮一小块纸 */
+.xm-btn--icon {
+  width: 24px;
+  height: 24px;
+  /* padding 4px + 内部 16px = 图标实际 16px */
+  padding: 4px;
+  border-color: transparent;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--xm-ink-soft);
+}
+.xm-btn--icon svg {
+  width: 100%;
+  height: 100%;
+}
+.xm-btn--icon:hover {
+  transform: none;
+  color: var(--xm-ink);
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(140, 105, 30, 0.18);
+}
+/* 置顶按钮的激活态（data-active 由前端设置） */
+.xm-btn[data-active="1"] {
+  color: var(--xm-accent-ink);
+  background: var(--xm-accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(180, 130, 30, 0.32);
+}
+
+/* 幽灵按钮：没有底色，只有文字，用于弹层里的小快捷项 */
+.xm-btn--ghost {
+  padding: 4px 8px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(120, 90, 20, 0.16);
+  font-size: 11px;
+  color: var(--xm-ink-soft);
+}
+.xm-btn--ghost:hover {
+  transform: none;
+  color: var(--xm-ink);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+/* ---------- 禁用态（用户报的 bug：不能点的按钮看起来和能点的一样） ----------
+   要求：一眼看出"现在按不动"，但又不能变灰破坏纸感——
+   所以只降透明度 + 降饱和，保留纸张本身的暖色；同时彻底去掉 hover 的浮起/高亮。
+   放在所有 :hover/:active 之后，用 :disabled:hover 这种更高优先级压住它们。 */
+.xm-btn:disabled,
+.xm-btn:disabled:hover,
+.xm-btn:disabled:active,
+.xm-btn--primary:disabled,
+.xm-btn--primary:disabled:hover,
+.xm-btn--primary:disabled:active {
+  transform: none;
+  opacity: 0.45;
+  filter: saturate(0.5);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+/* 幽灵按钮本来没有底色，透明度降下来以后墨字容易显灰；
+   单独把它压到暖褐墨色，禁用时仍然是"纸上淡墨"，不会变成系统灰。 */
+.xm-btn--ghost:disabled,
+.xm-btn--ghost:disabled:hover,
+.xm-btn--ghost:disabled:active {
+  color: rgba(107, 74, 15, 0.72);
+}
+
+/* ==========================================================================
+   9. 便签内弹层 .xm-pop（提醒 / 更多菜单）
+   --------------------------------------------------------------------------
+   浮在纸面上的一小块"纸签"，不是系统对话框：
+   浅底、圆角、柔和投影，位置固定在纸的右上角下面。
+   ========================================================================== */
+.xm-pop {
+  /* 菜单/弹层永远按「中」档字号排版：便签自己调成小/大时，弹层不许跟着
+     变大变小（会挤行、会顶到纸外面），它是一块固定的控制面板。 */
+  --xm-font-scale: 1;
+  position: absolute;
+  top: 34px;
+  right: 12px;
+  z-index: 20;
+  /* 弹层宽度也跟着字号缩放（§12.9 便签内弹层必须跟随），
+     否则 1.3 档按钮字变大、弹层还是 214px，会挤成两行。
+     max-width 仍按纸宽兜底。 */
+  width: calc(214px * var(--xm-font-scale));
+  max-width: calc(100% - 24px);
+  /* 便签矮的时候菜单放不下，最多长到窗口底部、剩下的自己滚——每一项都还点得到。
+     滚动条做成 6px 半透明的细线：不要系统那种灰粗条，也别让它看起来像出了故障。 */
+  max-height: calc(100vh - 46px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(140, 108, 40, 0.28) transparent;
+  box-sizing: border-box;
+  padding: 10px;
+  border-radius: 11px;
+  background: linear-gradient(160deg, rgba(255, 253, 245, 0.98), rgba(255, 248, 224, 0.97));
+  box-shadow:
+    inset 0 0 0 1px rgba(150, 116, 30, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    0 3px 8px rgba(90, 64, 10, 0.18),
+    0 14px 28px -8px rgba(90, 64, 10, 0.28);
+  animation: xm-pop-in var(--xm-dur-in) var(--xm-ease-spring) backwards;
+}
+.xm-pop::-webkit-scrollbar {
+  width: 6px;
+}
+.xm-pop::-webkit-scrollbar-track {
+  background: transparent;
+}
+.xm-pop::-webkit-scrollbar-thumb {
+  background: rgba(140, 108, 40, 0.26);
+  border-radius: 3px;
+}
+.xm-pop::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 108, 40, 0.42);
+}
+.xm-pop[hidden] {
+  display: none;
+}
+.xm-pop__label {
+  padding: 0 2px 6px;
+  font-family: var(--xm-font-ui);
+  font-size: calc(10.5px * var(--xm-font-scale));
+  letter-spacing: 0.6px;
+  color: var(--xm-ink-soft);
+}
+.xm-pop__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.xm-pop__row + .xm-pop__row {
+  margin-top: 8px;
+}
+.xm-pop__row > .xm-btn--primary {
+  flex: 1 1 auto;
+}
+.xm-pop__quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 8px 0;
+}
+.xm-pop__sep {
+  height: 1px;
+  margin: 7px 0;
+  background: var(--xm-line-soft);
+}
+.xm-pop__mini {
+  flex: 0 0 auto;
+  font-size: calc(10.5px * var(--xm-font-scale));
+  color: var(--xm-ink-soft);
+}
+/* 整行按钮（删除便签 / 关闭窗口） */
+.xm-pop__item {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-family: var(--xm-font-ui);
+  font-size: calc(12px * var(--xm-font-scale));
+  text-align: left;
+  color: var(--xm-ink);
+  cursor: pointer;
+  transition: background-color var(--xm-dur-quick) linear;
+}
+.xm-pop__item:hover {
+  background: rgba(255, 255, 255, 0.68);
+}
+.xm-pop__item[data-act="delete"] {
+  color: #94402b;
+}
+.xm-pop__item[data-confirm="1"] {
+  background: rgba(190, 70, 50, 0.14);
+  color: #8d331f;
+  font-weight: 600;
+}
+
+/* ---------- 日期时间输入（提醒弹层里） ---------- */
+.xm-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  border: 1px solid rgba(150, 116, 30, 0.26);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  font-family: var(--xm-font-ui);
+  font-size: calc(11.5px * var(--xm-font-scale));
+  color: var(--xm-ink);
+  outline: 0;
+  color-scheme: light; /* 让原生日期控件也走浅色主题 */
+  transition: border-color var(--xm-dur-quick), box-shadow var(--xm-dur-quick);
+}
+.xm-field:focus {
+  border-color: rgba(196, 146, 36, 0.7);
+  box-shadow: 0 0 0 3px rgba(217, 145, 43, 0.16);
+}
+
+/* ---------- 6 色选择圆点 ---------- */
+.xm-colors {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px;
+}
+.xm-color-dot {
+  position: relative;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  /* 圆点本身就是一小片纸：深色在上，浅色在下 */
+  background: linear-gradient(150deg, var(--xm-dot-a, #fff0a0), var(--xm-dot-b, #ffde55));
+  box-shadow:
+    inset 0 0 0 1px rgba(120, 90, 20, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 1px 2px rgba(96, 70, 14, 0.16);
+  transition:
+    transform var(--xm-dur-quick) var(--xm-ease-spring),
+    box-shadow var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-color-dot:hover {
+  transform: translateY(-1px) scale(1.06);
+}
+/* 选中：外面套一圈纸色留白 + 一圈琥珀线（像给圆点描了个边） */
+.xm-color-dot[data-active="1"] {
+  box-shadow:
+    inset 0 0 0 1px rgba(120, 90, 20, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 0 0 2px var(--xm-paper-back),
+    0 0 0 3.5px var(--xm-accent);
+}
+/* 每个圆点用自己的纸色 */
+.xm-color-dot[data-color="yellow"] {
+  --xm-dot-a: #fff0a0;
+  --xm-dot-b: #ffde55;
+}
+.xm-color-dot[data-color="pink"] {
+  --xm-dot-a: #ffe6de;
+  --xm-dot-b: #ffc1b0;
+}
+.xm-color-dot[data-color="mint"] {
+  --xm-dot-a: #e7f6e1;
+  --xm-dot-b: #c2e5b9;
+}
+.xm-color-dot[data-color="sky"] {
+  --xm-dot-a: #e3f0fe;
+  --xm-dot-b: #bbd8f7;
+}
+.xm-color-dot[data-color="lavender"] {
+  --xm-dot-a: #eee4fe;
+  --xm-dot-b: #d0b8f5;
+}
+.xm-color-dot[data-color="rose"] {
+  --xm-dot-a: #ffe3e8;
+  --xm-dot-b: #ffb6c6;
+}
+
+/* ---------- 分段按钮（字号 小/中/大） ---------- */
+.xm-seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 7px;
+  background: rgba(140, 105, 30, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(140, 105, 30, 0.14);
+}
+/* 选中态不再直接写背景/阴影：渐变（background-image）本身不过渡，
+   之前点「大」是"啪"地换一块；改成 ::before 铺选中纸片、用 opacity 交叉淡入（120ms），
+   底色和描边一起渐变，手感才像纸片被按下去又浮起来。 */
+.xm-seg__item {
+  position: relative;
+  isolation: isolate;
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  font-family: var(--xm-font-ui);
+  font-size: calc(11px * var(--xm-font-scale));
+  color: var(--xm-ink-soft);
+  cursor: pointer;
+  transition: color var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-seg__item::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(160deg, #fffdf4, #fff4d0);
+  box-shadow:
+    0 1px 2px rgba(96, 70, 14, 0.18),
+    inset 0 0 0 1px rgba(150, 116, 30, 0.16);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--xm-ease-out);
+}
+.xm-seg__item:hover {
+  color: var(--xm-ink);
+}
+.xm-seg__item[data-active="1"] {
+  color: var(--xm-ink);
+}
+.xm-seg__item[data-active="1"]::before {
+  opacity: 1;
+}
+
+/* ---------- 重复提醒分段控件 .xm-repeat ----------
+   4 项要塞进便签的提醒浮层（325 纸宽 → 弹层内宽约 194）：
+   每项 flex 均分、字号随缩放；万一 1.3 档放不下，就自动折成两行两列。 */
+.xm-repeat {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 2px 0 0;
+}
+.xm-repeat__opt {
+  flex: 1 1 0;
+  min-width: 42px;
+  height: 26px; /* 整体高度 26~28px，能塞进提醒浮层 */
+  padding: 0 4px;
+  border: 1px solid rgba(150, 116, 30, 0.24);
+  border-radius: 6px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.28));
+  font-family: var(--xm-font-ui);
+  font-size: calc(11px * var(--xm-font-scale));
+  line-height: 24px;
+  white-space: nowrap;
+  text-align: center;
+  color: var(--xm-ink-soft);
+  cursor: pointer;
+  transition:
+    color var(--xm-dur-quick) var(--xm-ease-out),
+    background var(--xm-dur-quick) var(--xm-ease-out),
+    box-shadow var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-repeat__opt:hover {
+  color: var(--xm-ink);
+  background: rgba(255, 255, 255, 0.72);
+}
+.xm-repeat__opt[data-active="1"] {
+  color: var(--xm-accent-ink);
+  background: linear-gradient(160deg, #ffe9a8, #f5c65a);
+  box-shadow:
+    inset 0 0 0 1px rgba(160, 110, 20, 0.45),
+    0 1px 2px rgba(96, 70, 14, 0.16);
+}
+
+/* 弹层里的按钮字号也要跟缩放（.xm-btn 的基础 12px 是给面板用的） */
+.xm-pop .xm-btn {
+  font-size: calc(12px * var(--xm-font-scale));
+}
+/* 提醒弹层的宽度（app.css 里 .xm-pop--due 写了 210px，这里用更高特异性压过它） */
+.xm-note .xm-pop--due {
+  width: calc(210px * var(--xm-font-scale));
+}
+/* 待办行里的截止时间标签（基础样式在 app.css，这里只补"跟着字号缩放"） */
+.xm-note .xm-todo__due {
+  font-size: calc(9.5px * var(--xm-font-scale));
+  height: calc(18px * var(--xm-font-scale));
+  line-height: calc(18px * var(--xm-font-scale));
+}
+
+/* ==========================================================================
+   10. 召唤面板 .xm-panel
+   --------------------------------------------------------------------------
+   用户选的是纯纸面，所以面板也是"一整张米白纸"，不用毛玻璃。
+   ========================================================================== */
+.xm-panel {
+  position: relative;
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 14px 10px;
+  border-radius: var(--xm-radius-panel);
+  background-color: var(--xm-sheet-a);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.6) 0%, rgba(255, 255, 255, 0) 14%),
+    linear-gradient(0deg, rgba(146, 108, 16, 0.1) 0%, rgba(146, 108, 16, 0) 14%),
+    var(--xm-tex),
+    repeating-linear-gradient(96deg, rgba(120, 86, 18, 0.04) 0 1px, rgba(120, 86, 18, 0) 1px 7px),
+    /* 面板纸比卡片略深一档的暖黄，卡片（近白纸）压在上面才分得清层次 */
+    linear-gradient(165deg, var(--xm-sheet-a) 0%, var(--xm-sheet-b) 52%, var(--xm-sheet-c) 100%);
+  background-blend-mode: normal, normal, soft-light, normal, normal;
+  box-shadow:
+    inset 0 0 0 1px rgba(120, 88, 20, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 10px 30px -8px rgba(60, 42, 8, 0.3);
+  overflow: hidden;
+  animation: xm-panel-in var(--xm-dur-panel) var(--xm-ease-out) backwards;
+}
+
+.xm-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+/* 搜索框：纸面上一块被压平的小方框，聚焦时亮一圈琥珀光 */
+.xm-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid rgba(150, 116, 30, 0.22);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.62);
+  font-family: var(--xm-font-ui);
+  font-size: 12px;
+  color: var(--xm-ink);
+  outline: 0;
+  transition:
+    border-color var(--xm-dur-quick) var(--xm-ease-out),
+    box-shadow var(--xm-dur-quick) var(--xm-ease-out),
+    background-color var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-search::placeholder {
+  color: var(--xm-ink-faint);
+}
+.xm-search:focus {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(196, 146, 36, 0.6);
+  box-shadow: 0 0 0 3px rgba(217, 145, 43, 0.18);
+}
+
+.xm-panel__actions {
+  display: flex;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+
+/* 面板顶部「回收站」图标上的数字角标：暖黄底 + 墨字，≤2 位数字（更多由前端截断成 99+） */
+.xm-btn[data-act="trash"] {
+  position: relative;
+}
+.xm-btn[data-act="trash"]::after {
+  content: attr(data-count);
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  box-sizing: border-box;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: linear-gradient(160deg, #f3b445, #d9912b);
+  color: #3a2506;
+  font-family: var(--xm-font-ui);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 1px 2px rgba(96, 70, 14, 0.3);
+  pointer-events: none;
+}
+/* 没有数量（或 0）就不显示角标 */
+.xm-btn[data-act="trash"]:not([data-count])::after,
+.xm-btn[data-act="trash"][data-count=""]::after,
+.xm-btn[data-act="trash"][data-count="0"]::after {
+  display: none;
+}
+
+/* 列表：滚动区，滚动条由后文统一美化 */
+.xm-panel__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  padding: 2px 3px 4px 1px;
+  margin: 0;
+}
+.xm-panel__foot {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  text-align: center;
+  font-family: var(--xm-font-ui);
+  font-size: 10.5px;
+  letter-spacing: 0.2px;
+  color: var(--xm-ink-faint);
+}
+
+/* ---------- 10.4 回收站视图 .xm-trash ----------
+   它占满 .xm-panel__list 的容器：自己滚动（滚动条隐藏），
+   一行 = 标题 + 摘要 + 「删除于 X」+ 右侧「恢复」；行之间 1px 淡墨虚线。
+   420x620 面板里一屏能完整放下 5 行（单行约 62px 高）。 */
+.xm-trash {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 0 1px 4px 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.xm-trash::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.xm-trash__head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 1px 2px 7px;
+  font-family: var(--xm-font-ui);
+  font-size: 11.5px;
+  color: var(--xm-ink-soft);
+}
+/* 说明文字留在左边（太长就省略号），按钮组靠右 */
+.xm-trash__intro {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.xm-trash__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+.xm-trash__head > .xm-btn,
+.xm-trash__actions > .xm-btn {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  font-size: 11px;
+  line-height: 15px;
+}
+/* 「清空回收站」：砖红描边，危险但不刺眼（不用纯红） */
+.xm-trash__head .xm-btn[data-act="empty"] {
+  color: var(--xm-danger);
+  border-color: rgba(139, 58, 42, 0.3);
+}
+.xm-trash__head .xm-btn[data-act="empty"]:hover {
+  background: var(--xm-danger-soft);
+  border-color: rgba(139, 58, 42, 0.45);
+}
+/* 二次确认态：填成砖红底，用户一眼知道"再点一下真删" */
+.xm-trash__head .xm-btn[data-act="empty"][data-confirm="1"],
+.xm-trash__head .xm-btn[data-act="empty"][data-confirm="1"]:hover {
+  color: #fff8ef;
+  background: linear-gradient(160deg, #a24a37, #8b3a2a);
+  border-color: rgba(110, 44, 30, 0.6);
+  font-weight: 600;
+}
+
+/* 行：grid 三行（标题/摘要/时间），右侧「恢复」跨三行垂直居中。 */
+.xm-trash__row {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title restore"
+    "preview restore"
+    "meta restore";
+  column-gap: 8px;
+  row-gap: 1px;
+  box-sizing: border-box;
+  padding: 8px 8px 7px 10px;
+  border-bottom: 1px dashed var(--xm-line-soft);
+  border-radius: 6px;
+  transition: background-color var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-trash__row:last-child {
+  border-bottom: 0;
+}
+.xm-trash__row:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+.xm-trash__row[data-selected="1"] {
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow: inset 0 0 0 1px rgba(196, 146, 36, 0.28);
+}
+.xm-trash__row:focus-visible {
+  outline: 2px solid var(--xm-accent);
+  outline-offset: -2px;
+}
+.xm-trash__title {
+  grid-area: title;
+  overflow: hidden;
+  font-family: var(--xm-font-ui);
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--xm-ink-strong);
+}
+.xm-trash__preview {
+  grid-area: preview;
+  overflow: hidden;
+  font-family: var(--xm-font-ui);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--xm-ink-soft);
+}
+.xm-trash__meta {
+  grid-area: meta;
+  font-family: var(--xm-font-ui);
+  font-size: 10.5px;
+  color: var(--xm-ink-faint);
+}
+.xm-trash__row .xm-btn {
+  grid-area: restore;
+  align-self: center;
+  padding: 3px 10px;
+  font-size: 11px;
+  line-height: 15px;
+}
+/* 空态（前端也复用 .xm-empty；这里留同名兜底） */
+.xm-trash__empty {
+  padding: 36px 14px;
+  text-align: center;
+  font-family: var(--xm-font-ui);
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--xm-ink-soft);
+}
+
+/* 空状态 */
+.xm-empty {
+  padding: 30px 14px;
+  text-align: center;
+  font-family: var(--xm-font-ui);
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--xm-ink-soft);
+}
+.xm-empty::before {
+  content: "✎";
+  display: block;
+  margin-bottom: 6px;
+  font-size: 22px;
+  opacity: 0.3;
+}
+
+/* ==========================================================================
+   11. 卡片 .xm-card
+   ========================================================================== */
+.xm-card {
+  position: relative;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  padding: 9px 11px 8px 15px;
+  border-radius: 9px;
+  /* 卡片比面板底色更亮（接近"白纸"），再压一道更实的影子：
+     卡片是"贴在面板这张纸上"的另一张纸，分层一眼能看出来。 */
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.94), rgba(255, 252, 243, 0.86));
+  box-shadow:
+    inset 0 0 0 1px rgba(120, 88, 20, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 1px 2px rgba(96, 70, 14, 0.12),
+    0 6px 12px -4px rgba(96, 70, 14, 0.18);
+  cursor: pointer;
+  transition:
+    transform var(--xm-dur-quick) var(--xm-ease-out),
+    box-shadow var(--xm-dur-quick) var(--xm-ease-out),
+    background-color var(--xm-dur-quick) var(--xm-ease-out);
+}
+/* 左边那道色条：颜色跟着 card 的 data-color 走，一眼分清黄/粉/绿… */
+.xm-card::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--xm-paper-c), var(--xm-accent));
+  opacity: 0.85;
+}
+.xm-card:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.9), rgba(255, 252, 240, 0.78));
+  box-shadow:
+    inset 0 0 0 1px rgba(120, 88, 20, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 3px 6px rgba(96, 70, 14, 0.12),
+    0 10px 20px -6px rgba(96, 70, 14, 0.18);
+}
+/* 键盘 ↑↓ 选中的卡片：琥珀描边 + 纸面浮起 */
+.xm-card[data-selected="1"] {
+  transform: translateY(-1px);
+  background: linear-gradient(160deg, #fffef8, #fff7dc);
+  box-shadow:
+    inset 0 0 0 1px rgba(196, 146, 36, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 3px 7px rgba(96, 70, 14, 0.12),
+    0 10px 20px -6px rgba(96, 70, 14, 0.18);
+}
+.xm-card[data-selected="1"]::before {
+  opacity: 1;
+  background: linear-gradient(180deg, var(--xm-accent), var(--xm-accent-ink));
+}
+
+/* 列表里的卡片态：hover 只压深阴影（纸面不提亮，避免鼠标扫过一片白）；
+   键盘选中才提亮纸面 + 两圈琥珀。这两段原来在 app.css，和纸面规则拆在
+   两个文件里，夜间补丁只能靠提高特异性反压；现在收回到这里统一管理。 */
+.xm-panel__list .xm-card:hover {
+  box-shadow:
+    inset 0 0 0 1px rgba(196, 146, 36, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    0 3px 7px rgba(96, 70, 14, 0.13),
+    0 10px 20px -6px rgba(96, 70, 14, 0.18);
+}
+.xm-panel__list .xm-card[data-selected="1"] {
+  background: linear-gradient(160deg, #fffef8, #fff6d2);
+  box-shadow:
+    0 0 0 2px rgba(217, 145, 43, 0.85),
+    inset 0 0 0 1px rgba(150, 116, 30, 0.28),
+    0 3px 8px rgba(96, 70, 14, 0.14),
+    0 10px 20px -6px rgba(96, 70, 14, 0.2);
+}
+.xm-panel__list .xm-card[data-selected="1"] .xm-card__title {
+  color: var(--xm-accent-ink);
+}
+
+.xm-card__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.xm-card__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--xm-font-ui);
+  /* 标题比正文（13px）大约 25%，字重 600，颜色用"加强墨"——一眼先看到标题 */
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0.2px;
+  color: var(--xm-ink-strong);
+}
+/* 角标：按 data-kind 分色——备忘=琥珀、待办=墨绿。
+   两种都是"纸上的小标签"：淡底 + 深字，克制不抢标题。 */
+.xm-card__badge {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-family: var(--xm-font-ui);
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  background: var(--xm-accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(150, 116, 30, 0.16);
+  color: var(--xm-accent-ink);
+}
+.xm-card[data-kind="memo"] .xm-card__badge {
+  background: var(--xm-badge-memo-bg);
+  box-shadow: inset 0 0 0 1px rgba(196, 146, 36, 0.28);
+  color: var(--xm-badge-memo-ink);
+}
+.xm-card[data-kind="todo"] .xm-card__badge {
+  background: var(--xm-badge-todo-bg);
+  box-shadow: inset 0 0 0 1px rgba(74, 106, 78, 0.26);
+  color: var(--xm-badge-todo-ink);
+}
+/* 卡片正文固定三行 */
+.xm-card__text {
+  margin: 0;
+  font-family: var(--xm-font-ui);
+  font-size: 13px;
+  line-height: 1.6;
+  /* 正文用实墨色：0.6 透明度的"软墨"在暖黄纸上对比度只有 3.2:1，
+     读起来发灰；实墨是 9:1 以上，舒服得多。 */
+  color: var(--xm-ink);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+.xm-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 5px;
+  font-family: var(--xm-font-ui);
+  font-size: 11.5px;
+  color: var(--xm-ink-soft);
+}
+.xm-card__todos {
+  font-variant-numeric: tabular-nums;
+  color: var(--xm-ink-soft);
+}
+/* 时间戳：比正文淡一点，但清楚可读（12.5px + meta 墨色） */
+.xm-card__time {
+  font-size: 12.5px;
+  color: var(--xm-ink-meta);
+}
+
+/* ==========================================================================
+   12. 设置页 .xm-settings
+   ========================================================================== */
+.xm-settings {
+  position: relative;
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
+  /* 上下内边距 14/16 → 10/10：真实窗口内容区约 480x600，六组设置要一屏放下 */
+  padding: 10px 14px 10px;
+  border-radius: var(--xm-radius-panel);
+  background-color: var(--xm-sheet-a);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.6) 0%, rgba(255, 255, 255, 0) 10%),
+    var(--xm-tex),
+    linear-gradient(168deg, var(--xm-sheet-a) 0%, var(--xm-sheet-b) 58%, var(--xm-sheet-c) 100%);
+  background-blend-mode: normal, soft-light, normal;
+  box-shadow:
+    inset 0 0 0 1px rgba(120, 88, 20, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 10px 30px -8px rgba(60, 42, 8, 0.3);
+  animation: xm-panel-in var(--xm-dur-panel) var(--xm-ease-out) backwards;
+}
+.xm-settings__group {
+  /* 组间距 14 → 8 → 4：四组主要设置要在一屏内放下，不做无意义的滚动 */
+  margin-top: 4px;
+}
+.xm-settings__group-title {
+  margin: 0;
+  font-family: var(--xm-font-ui);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 14px;
+  letter-spacing: 1px;
+  color: var(--xm-ink-soft);
+}
+/* 设置行：底部一条虚线，像手账里画的分隔线 */
+.xm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  /* 行内上下 3px：两行文案（标题+说明）还能透开气，整页高度却明显收紧 */
+  padding: 3px 2px;
+  border-bottom: 1px dashed var(--xm-line-soft);
+}
+.xm-settings__group .xm-row:last-child {
+  border-bottom: 0;
+}
+.xm-row__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--xm-font-ui);
+  font-size: 13px;
+  color: var(--xm-ink);
+}
+.xm-row__label small {
+  display: block;
+  margin-top: 1px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--xm-ink-soft);
+}
+
+/* ---------- 开关：纸/木质感，打开时是琥珀色 ---------- */
+.xm-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  /* 关：纸灰色轨道，看得清是"关着"的 */
+  background: linear-gradient(160deg, #ece0c4, #d6c8a4);
+  box-shadow:
+    inset 0 1px 3px rgba(90, 70, 20, 0.34),
+    inset 0 0 0 1px rgba(110, 82, 28, 0.3);
+  transition:
+    background-color var(--xm-dur-in) var(--xm-ease-out),
+    box-shadow var(--xm-dur-in) var(--xm-ease-out);
+}
+/* 圆形推钮：像一小块打磨过的木片/纸片 */
+.xm-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, #fffefb, #f4ecd8 62%, #e2d8bc 100%);
+  box-shadow:
+    0 2px 4px rgba(90, 70, 20, 0.34),
+    0 1px 1px rgba(90, 70, 20, 0.2),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.85);
+  transition: transform var(--xm-dur-in) var(--xm-ease-spring);
+}
+.xm-switch[aria-checked="1"] {
+  /* 开：饱和琥珀轨道，和"关"的纸灰对比强烈，一眼能看出状态 */
+  background: linear-gradient(160deg, #f0ad35, #d1830f);
+  box-shadow:
+    inset 0 1px 3px rgba(120, 70, 0, 0.28),
+    inset 0 0 0 1px rgba(150, 100, 12, 0.4),
+    0 0 10px rgba(217, 145, 43, 0.3);
+}
+.xm-switch[aria-checked="1"]::after {
+  transform: translateX(18px);
+}
+.xm-switch:focus-visible {
+  outline: 2px solid var(--xm-accent);
+  outline-offset: 2px;
+}
+
+/* ---------- 键帽 ---------- */
+.xm-kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: linear-gradient(160deg, #fffdf7, #f2ebd8);
+  box-shadow:
+    inset 0 1px 0 #ffffff,
+    0 1.5px 0 rgba(120, 92, 40, 0.3);
+  font-family: var(--xm-font-ui);
+  font-size: 11px;
+  line-height: 15px;
+  letter-spacing: 0.4px;
+  color: var(--xm-ink-meta);
+  white-space: nowrap;
+}
+
+/* ---------- 可点的快捷键键帽（设置页「快捷键」行） ----------
+   DOM 是 <button class="xm-kbd xm-kbd--edit">，外观必须还是纸面小键帽，
+   所以要把浏览器给按钮的默认边框/背景/字体全部清掉。 */
+.xm-kbd--edit {
+  border: 0;
+  font: inherit;
+  line-height: 15px;
+  cursor: pointer;
+  transition:
+    color var(--xm-dur-quick) var(--xm-ease-out),
+    box-shadow var(--xm-dur-quick) var(--xm-ease-out);
+}
+/* hover：键帽边缘透出一圈很淡的琥珀，暗示"这里能点" */
+.xm-kbd--edit:hover {
+  color: var(--xm-ink);
+  box-shadow:
+    inset 0 1px 0 #ffffff,
+    0 1.5px 0 rgba(120, 92, 40, 0.3),
+    0 0 0 2px rgba(217, 145, 43, 0.26);
+}
+.xm-kbd--edit:active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 1px 0 #ffffff,
+    0 0.5px 0 rgba(120, 92, 40, 0.3);
+}
+.xm-kbd--edit:focus-visible {
+  outline: 2px solid var(--xm-accent);
+  outline-offset: 2px;
+}
+/* 捕获中（data-capturing=1）：1px 琥珀虚线描边 + 呼吸。
+   虚线用 outline 画（outline-offset:-1px），不占布局、不加宽，
+   这样键帽宽度不会在进入/退出捕获时跳一下。 */
+.xm-kbd--edit[data-capturing="1"] {
+  color: var(--xm-accent-ink);
+  outline: 1px dashed rgba(201, 132, 24, 0.85);
+  outline-offset: -1px;
+  animation: xm-kbd-breathe 1.2s ease-in-out infinite;
+}
+/* 捕获失败回滚时前端会移除 data-capturing，这里不留任何残留高亮 */
+@keyframes xm-kbd-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* 设置页 / 面板里的提示条位置 */
+.xm-settings .xm-toast {
+  bottom: 14px;
+}
+
+/* ==========================================================================
+   13. 提醒弹窗 .xm-reminder
+   --------------------------------------------------------------------------
+   像一张小便签从桌面上"弹"到眼前：轻微放大 + 回正 + 淡入。
+   ========================================================================== */
+.xm-reminder {
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  font-family: var(--xm-font-ui);
+  color: var(--xm-ink);
+}
+.xm-reminder__paper {
+  width: 100%;
+  max-width: 300px;
+  padding: 16px 18px 14px;
+  animation: xm-reminder-in 0.24s var(--xm-ease-spring) backwards;
+}
+.xm-reminder__time {
+  font-family: var(--xm-font-ui);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--xm-ink);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+.xm-reminder__title {
+  margin: 2px 0 0;
+  font-family: var(--xm-font-ui);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--xm-ink);
+}
+.xm-reminder__text {
+  margin: 6px 0 12px;
+  font-family: var(--xm-font-ui);
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--xm-ink);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+  word-break: break-word;
+}
+.xm-reminder__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ==========================================================================
+   14. 动效关键帧
+   --------------------------------------------------------------------------
+   规则：只允许 transform / opacity / filter，避免触发布局（不抖不卡）。
+   ========================================================================== */
+
+/* 便签入场（M3）：像一张纸从桌面上方轻轻落下来——
+   起点在纸面略上方、比静止角度再歪 1.2°，边落边回正，末尾带一层极淡的
+   落影再收小；全程只动 opacity / transform / filter，不触发布局。
+   注意：纸面静止时本来就带 rotate(var(--xm-rot))，关键帧必须写同样的角度，
+   否则会和静态 rotate 叠成双重旋转（落定那一帧会抖）。 */
+@keyframes xm-note-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) rotate(calc(var(--xm-rot) - 1.2deg));
+    filter: drop-shadow(0 2px 4px rgba(120, 90, 30, 0.18));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) rotate(var(--xm-rot));
+    filter: drop-shadow(0 1px 2px rgba(120, 90, 30, 0.16));
+  }
+}
+
+/* 面板 / 设置登场：0.16s 轻微上浮 */
+@keyframes xm-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.994);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 提醒弹窗：像小便签被"弹"出来——先稍微大一点、歪一点，再落定 */
+@keyframes xm-reminder-in {
+  from {
+    opacity: 0;
+    transform: rotate(calc(var(--xm-rot) - 2.2deg)) scale(0.94) translateY(8px);
+  }
+  60% {
+    opacity: 1;
+    transform: rotate(calc(var(--xm-rot) + 0.5deg)) scale(1.015) translateY(-1px);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(var(--xm-rot)) scale(1) translateY(0);
+  }
+}
+
+/* 弹层出现 */
+@keyframes xm-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ==========================================================================
+   15. 滚动条美化（面板列表 / 设置页）
+   ========================================================================== */
+.xm-panel__list,
+.xm-settings {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(140, 105, 30, 0.3) transparent;
+}
+.xm-panel__list::-webkit-scrollbar,
+.xm-settings::-webkit-scrollbar {
+  width: 6px;
+}
+.xm-panel__list::-webkit-scrollbar-track,
+.xm-settings::-webkit-scrollbar-track {
+  background: transparent;
+}
+.xm-panel__list::-webkit-scrollbar-thumb,
+.xm-settings::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(140, 105, 30, 0.26);
+}
+.xm-panel__list::-webkit-scrollbar-thumb:hover,
+.xm-settings::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 105, 30, 0.4);
+}
+
+/* ==========================================================================
+   16. 无障碍：用户关闭动效时，全部动画/过渡立刻结束
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  .xm-note,
+  .xm-note__paper,
+  .xm-panel,
+  .xm-settings,
+  .xm-reminder__paper,
+  .xm-pop,
+  .xm-toast,
+  .xm-btn,
+  .xm-card,
+  .xm-switch,
+  .xm-switch::after,
+  .xm-todo,
+  .xm-todo__text,
+  .xm-todo__check,
+  .xm-todo__del,
+  .xm-sheet__inner,
+  .xm-todos,
+  .xm-note__body::before,
+  .xm-note__body::after,
+  .xm-note [data-act="pin"] svg,
+  .xm-note [data-act="pin"]:active,
+  .xm-colorfade,
+  .xm-trash__row,
+  .xm-repeat__opt,
+  .xm-kbd--edit,
+  .xm-seg__item,
+  .xm-seg__item::before,
+  .xm-version,
+  .xm-version__todo-check,
+  .xm-note__body,
+  .xm-note__foot,
+  .xm-note__tools,
+  .xm-color-dot,
+  .xm-field,
+  .xm-search,
+  .xm-chip,
+  .xm-filters__clear,
+  .xm-todo__due {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+
+/* ==========================================================================
+   17. 无边框纸窗 .xm-chrome（面板 / 设置 / 提醒）
+   --------------------------------------------------------------------------
+   为什么要这层：原生标题栏是灰白色的系统框，跟暖黄纸完全不是一张东西；
+   窗口改成"无边框 + 透明"之后，整个窗口得由我们自己画成一张纸。
+
+   纸窗是三层叠出来的（从外到内）：
+     ① 封皮：外圈那层更暖、更深的黄纸，带纸纹和纸边高光；
+     ② 内页：往里缩 5px 的米白纸，真正写字的地方（.xm-chrome__body）；
+     ③ 折痕：标题条和内页之间一道极淡的折痕，像纸被折过一道。
+   投影分两段：贴窗口的硬接触影 + 散开的空气影，纸才像放在桌面上。
+
+   结构（前端按此实现）：
+     <div class="xm-chrome" data-surface="panel|settings|reminder">
+       <header class="xm-chrome__head" data-tauri-drag-region>
+         <span class="xm-chrome__title">小梦备忘录</span>
+         <div class="xm-chrome__actions">
+           <button class="xm-winbtn xm-winbtn--min" data-act="min"></button>
+           <button class="xm-winbtn xm-winbtn--close" data-act="close"></button>
+         </div>
+       </header>
+       <div class="xm-chrome__body">…原来的 .xm-panel / .xm-settings / .xm-reminder…</div>
+     </div>
+   ========================================================================== */
+.xm-chrome {
+  position: absolute;
+  /* 窗口是透明的：四边各留 7px 空地，投影才有地方散开，不会被窗口边缘切成直线 */
+  inset: var(--xm-chrome-gap);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  border-radius: var(--xm-chrome-radius);
+  /* 封皮：斜着打光，左上亮、右下深；纸纹用便签同一张噪点，保证是"同一种纸" */
+  background-color: var(--xm-chrome-shell-b);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0) 18%),
+    linear-gradient(0deg, rgba(146, 108, 16, 0.16) 0%, rgba(146, 108, 16, 0) 20%),
+    linear-gradient(166deg, var(--xm-chrome-shell-a) 0%, var(--xm-chrome-shell-b) 52%, var(--xm-chrome-shell-c) 100%);
+  box-shadow: var(--xm-chrome-shadow);
+  overflow: hidden; /* 内容（包括圆角）都裁在纸里 */
+  isolation: isolate;
+  animation: xm-chrome-in var(--xm-dur-panel) var(--xm-ease-out) backwards;
+}
+
+/* 封皮的纸纹：一层极淡的纤维噪点，乘上去像纸不像塑料 */
+.xm-chrome::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background-image: var(--xm-tex);
+  background-size: 160px 160px;
+  opacity: 0.32;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+
+/* 标题条 / 内页都压在纸纹上面 */
+.xm-chrome > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------- 17.1 标题条：一道极淡的折痕把它和内页分开 ---------- */
+.xm-chrome__head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--xm-chrome-head);
+  box-sizing: border-box;
+  padding: 0 9px 0 13px;
+  border-radius: var(--xm-chrome-radius) var(--xm-chrome-radius) 0 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0) 78%);
+  /* 折痕：一条 1px 暗线 + 紧跟一条 1px 高光（折起来的那道棱反的光），
+     再加一点内阴影，像纸被折过一道。 */
+  box-shadow:
+    inset 0 1px 0 var(--xm-chrome-crease-hi),
+    0 1px 0 var(--xm-chrome-crease),
+    0 2px 0 var(--xm-chrome-crease-hi),
+    inset 0 -7px 9px -9px rgba(120, 90, 30, 0.3);
+  cursor: default;
+}
+
+/* 窗口标题：界面字体、比正文淡一档，像纸边上印的一行小字 */
+.xm-chrome__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--xm-font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--xm-ink-meta);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 不要被选中的蓝底盖住 */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.xm-chrome__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  /* 两颗墨点靠得近一点：点中心距约 23px（原来是 32px） */
+  gap: 1px;
+  padding-right: 3px;
+}
+
+/* ---------- 17.2 墨点窗口按钮（方案 6）：两颗墨滴，整扇窗最安静的收口 ----------
+   可见的只有一个 9px 墨点：最小化＝淡墨、关闭＝砖红。
+   不做图标字形——两个点靠位置（左缩右关）和颜色区分，近看才认得出来。
+   命中区 24x22，手指/鼠标都够得着。 */
+.xm-winbtn {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 23px;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 7px;
+  cursor: pointer;
+  --xm-ink-dot: rgba(70, 58, 26, 0.68);
+  --xm-ink-dot-hot: rgba(48, 36, 10, 0.88);
+  --xm-ink-halo: rgba(146, 108, 16, 0.34);
+}
+
+/* 那一滴墨（不是正圆：边缘略不匀，像落笔时压出来的） */
+.xm-winbtn::before {
+  content: "";
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 48% 52% 51% 49% / 53% 47% 50% 50%;
+  transform: rotate(-3deg);
+  background:
+    radial-gradient(circle at 38% 30%, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0) 62%),
+    var(--xm-ink-dot);
+  /* 0.5px 内圈给墨点一个硬边，免得晕成污渍 */
+  box-shadow:
+    inset 0 0 0 0.5px rgba(88, 62, 22, 0.3),
+    0 0.5px 1px rgba(90, 68, 20, 0.22);
+  transition:
+    transform var(--xm-dur-quick) var(--xm-ease-spring),
+    background-color var(--xm-dur-quick) var(--xm-ease-out),
+    box-shadow var(--xm-dur-quick) var(--xm-ease-out);
+}
+
+/* 最小化：淡墨 */
+.xm-winbtn--min {
+  --xm-ink-dot: rgba(70, 58, 26, 0.68);
+  --xm-ink-dot-hot: rgba(48, 36, 10, 0.88);
+  --xm-ink-halo: rgba(146, 108, 16, 0.34);
+}
+
+/* 关闭：砖红（红里带褐，不跳出纸的色系） */
+.xm-winbtn--close {
+  --xm-ink-dot: rgba(148, 52, 32, 0.76);
+  --xm-ink-dot-hot: rgba(128, 34, 20, 0.95);
+  --xm-ink-halo: rgba(192, 74, 60, 0.42);
+}
+
+/* 悬停：墨点微微晕开，像笔尖在纸上停了一下 */
+.xm-winbtn:hover::before,
+.xm-winbtn:focus-visible::before {
+  transform: rotate(-3deg) scale(1.34);
+  background:
+    radial-gradient(circle at 38% 30%, rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0) 62%),
+    var(--xm-ink-dot-hot);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(88, 62, 22, 0.28),
+    0 0 8px var(--xm-ink-halo),
+    0 0.5px 1px rgba(90, 68, 20, 0.24);
+}
+.xm-winbtn:active::before {
+  transform: rotate(-3deg) scale(0.86);
+  box-shadow: 0 0.5px 1px rgba(90, 68, 20, 0.2);
+}
+
+/* 键盘用户也要看得见焦点 */
+.xm-winbtn:focus-visible {
+  outline: 2px solid var(--xm-accent);
+  outline-offset: 1px;
+}
+
+/* ---------- 17.3 内页：铺满窗口的米白纸（不再往里缩） ---------- */
+.xm-chrome__body {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  border-radius: 0 0 calc(var(--xm-chrome-radius) - 1px) calc(var(--xm-chrome-radius) - 1px);
+  background-color: var(--xm-chrome-face-b);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 10%),
+    linear-gradient(0deg, rgba(146, 108, 16, 0.1) 0%, rgba(146, 108, 16, 0) 12%),
+    linear-gradient(172deg, var(--xm-chrome-face-a) 0%, var(--xm-chrome-face-b) 58%, var(--xm-chrome-face-c) 100%);
+  /* 只留折痕上沿的一点亮边；不要四边框 —— 窗口本身已有 1px 内描边 */
+  box-shadow:
+    inset 0 1px 0 var(--xm-chrome-crease-hi);
+  overflow: hidden;
+}
+
+/* 内页里的 surface 根节点：撑满内页，自己负责滚动。
+   面板/设置/提醒原本是"窗口里唯一的一层纸"（各有圆角和投影），
+   进了纸窗就变成"内页上的一层内容"，必须去掉重复的壳，否则像纸套纸。 */
+.xm-chrome__body > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.xm-chrome__body > .xm-panel,
+.xm-chrome__body > .xm-settings {
+  height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+  background-color: transparent;
+  background-image: none;
+  animation: none; /* 纸张已经用纸窗的入场动画出现过，内容别再弹一次 */
+}
+.xm-chrome__body > .xm-reminder {
+  height: 100%;
+  padding: 6px 10px 8px;
+}
+/* 提醒窗口只有 360x240，纸要是还按原来的 300 宽居中，两侧会空出两条"没铺纸"的缝。
+   进了纸窗就让它铺满内页：纸窗本身就是纸，里面的提醒纸是"贴在纸上的小纸条"。 */
+.xm-chrome__body > .xm-reminder > .xm-reminder__paper {
+  max-width: none;
+  height: 100%;
+}
+
+/* ---------- 17.4 提醒窗口：更矮的标题条，纸窗更贴边 ---------- */
+.xm-chrome[data-surface="reminder"] .xm-chrome__head {
+  height: var(--xm-chrome-head-compact);
+  padding: 0 8px 0 11px;
+}
+.xm-chrome[data-surface="reminder"] .xm-chrome__title {
+  font-size: 12px;
+  letter-spacing: 0.4px;
+}
+
+/* 设置页内容多，标题条略瘦一点，给下面的分组多留 1px */
+.xm-chrome[data-surface="settings"] .xm-chrome__head {
+  height: calc(var(--xm-chrome-head) - 1px);
+}
+
+/* ---------- 17.5 入场 / 关闭：纸窗被"放下"，再被"收起" ---------- */
+@keyframes xm-chrome-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 关闭动效：前端给 .xm-chrome 加 data-closing="1" 时，纸窗轻轻收回去 */
+.xm-chrome[data-closing="1"] {
+  animation: xm-chrome-out 0.14s var(--xm-ease-out) forwards;
+  pointer-events: none;
+}
+@keyframes xm-chrome-out {
+  to {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.988);
+  }
+}
+
+/* 关掉动效的用户：纸窗直接就位 */
+@media (prefers-reduced-motion: reduce) {
+  .xm-chrome,
+  .xm-winbtn {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ==========================================================================
+   18. Markdown 渲染块 .xm-md-*（memo 便签"印在纸上"的排版）
+   --------------------------------------------------------------------------
+   Markdown 渲染出来是块级元素，而编辑态是纯文本 + white-space: pre-wrap。
+   两个坑必须先堵：
+     ① pre-wrap 会让块级标签之间的换行也变成空行 → 渲染态必须改回 normal，
+        否则每两个块之间都会多出一整行空白（在渲染态里表现为段落之间空一大截）；
+     ② 首块上边距 / 末块下边距会被算进 scrollHeight → 第一条和最后一条去掉外边距。
+
+   字号：正文沿用 --xm-font-base（16px × 用户在设置里选的字号），
+        标题按 20 / 17 / 15.5 等比缩放；
+   字体：一律 --xm-font-hand（楷体）——标题也绝不换黑体，换了一秒变网页。
+   ========================================================================== */
+
+/* ---------- 18.1 渲染态的基础环境 ---------- */
+.xm-text[data-md="1"] {
+  /* 块级排版：换行由元素决定，不再由源码里的换行决定 */
+  white-space: normal;
+  /* 渲染出来的是可点的"成品"，光标保持文本形（点一下就能回编辑） */
+  cursor: text;
+}
+
+/* 首尾块去外边距：不让正文上下白白多出一截空白，贴住纸边 */
+.xm-text[data-md="1"] > :first-child {
+  margin-top: 0;
+}
+.xm-text[data-md="1"] > :last-child {
+  margin-bottom: 0;
+}
+
+/* ---------- 18.2 标题：手写体 + 更深的墨，靠字重和字号分层 ---------- */
+.xm-md-h2,
+.xm-md-h3,
+.xm-md-h4 {
+  font-family: var(--xm-font-hand);
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.2px;
+  color: var(--xm-ink-strong);
+  /* 标题下面不画线、不加底色：纸上的标题就是"写得大一点、重一点" */
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+.xm-md-h2 {
+  /* 20px 起，跟着设置里的字号一起缩放 */
+  font-size: calc(20px * var(--xm-font-scale));
+  margin: 0.45em 0 0.2em;
+}
+.xm-md-h3 {
+  font-size: calc(17px * var(--xm-font-scale));
+  margin: 0.5em 0 0.18em;
+}
+.xm-md-h4 {
+  font-size: calc(15.5px * var(--xm-font-scale));
+  margin: 0.5em 0 0.12em;
+  letter-spacing: 0.35px;
+}
+/* 标题里夹了行内代码 / 加粗：跟着标题走，别突然变成正文大小或变细 */
+.xm-md-h2 .xm-md-code,
+.xm-md-h3 .xm-md-code,
+.xm-md-h4 .xm-md-code {
+  font-size: 0.78em;
+  padding: 0 3px;
+  vertical-align: 0.06em;
+}
+
+/* ---------- 18.3 段落：行高沿用 1.8，只给一点点段间距 ---------- */
+.xm-md-p {
+  margin: 0 0 0.45em;
+  /* 中文正文不首行缩进：便签窄，缩进两格反而把每行切得很碎 */
+}
+.xm-md-p:last-child {
+  margin-bottom: 0;
+}
+
+/* ---------- 18.4 列表：贴着纸边缩进一格多，别缩太深 ---------- */
+.xm-md-ul,
+.xm-md-ol {
+  margin: 0.1em 0 0.45em;
+  padding-left: 1.15em;
+}
+.xm-md-ul {
+  list-style: disc;
+}
+.xm-md-ol {
+  list-style: decimal;
+}
+.xm-md-li {
+  margin: 0.08em 0;
+  padding-left: 0.1em;
+}
+/* 列表点用淡墨，比正文轻半档，看着不抢 */
+.xm-md-ul > .xm-md-li::marker,
+.xm-md-ol > .xm-md-li::marker {
+  color: var(--xm-ink-soft);
+  font-size: 0.9em;
+}
+/* 列表项里如果要换行（比如带了代码），行距和正文一致，不要被压扁 */
+.xm-md-li > .xm-md-p {
+  margin: 0;
+}
+.xm-md-li > .xm-md-ul,
+.xm-md-li > .xm-md-ol {
+  margin: 0.1em 0 0;
+}
+
+/* ---------- 18.5 引用：左侧一道琥珀竖线，像用尺子画的一笔 ---------- */
+.xm-md-quote {
+  margin: 0.35em 0 0.45em;
+  padding: 0 0 0 8px;
+  border-left: 2px solid var(--xm-accent);
+  color: var(--xm-ink-soft);
+  /* 引用里的行距略收紧一点，跟正文区分开但不喧哗 */
+  line-height: 1.72;
+}
+.xm-md-quote > .xm-md-p {
+  margin: 0 0 0.3em;
+}
+.xm-md-quote > :last-child {
+  margin-bottom: 0;
+}
+
+/* ---------- 18.6 分隔线：1px 虚线淡墨 ---------- */
+.xm-md-hr {
+  height: 0;
+  margin: 0.5em 0;
+  border: 0;
+  border-top: 1px dashed var(--xm-line);
+}
+
+/* ---------- 18.7 代码块：一小片更白的纸，贴在便签上 ---------- */
+.xm-md-pre {
+  margin: 0.35em 0 0.45em;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: var(--xm-code-bg);
+  /* 不用 border（会占位、换行时容易错位），用 1px 内描边画纸边 */
+  box-shadow: inset 0 0 0 1px var(--xm-code-line);
+  font-family: var(--xm-font-mono);
+  font-size: calc(12.5px * var(--xm-font-scale));
+  line-height: 1.62;
+  letter-spacing: 0;
+  color: var(--xm-ink-strong);
+  /* 便签只有 260 多 px 宽：代码绝不横向滚动，宁可折行 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  tab-size: 2;
+}
+/* pre 里面的 code 别再来一套底和框 */
+.xm-md-pre > code {
+  display: inline;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font: inherit;
+  color: inherit;
+  white-space: inherit;
+}
+
+/* ---------- 18.8 行内代码：只垫一层极淡的白，不画框 ---------- */
+.xm-md-code {
+  font-family: var(--xm-font-mono);
+  font-size: 0.88em;
+  letter-spacing: 0;
+  padding: 0 3.5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.46);
+  box-shadow: inset 0 0 0 1px rgba(120, 88, 20, 0.2);
+  color: var(--xm-ink-strong);
+  /* 行内代码折行时，背景/圆角每一段都完整（不出现半截色块） */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+/* ---------- 18.9 加粗 / 斜体 / 删除线（中文的"斜"很难看，改成换色） ---------- */
+.xm-text[data-md="1"] strong {
+  font-weight: 700;
+  color: var(--xm-ink-strong);
+}
+.xm-text[data-md="1"] em {
+  /* 楷体硬斜会脏；用强调墨色 + 极淡底表达语气，仍是纸上的字 */
+  font-style: normal;
+  color: var(--xm-accent-ink);
+  background: linear-gradient(0deg, rgba(217, 145, 43, 0.14), rgba(217, 145, 43, 0.14));
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.xm-text[data-md="1"] del {
+  color: var(--xm-ink-soft);
+  text-decoration: line-through;
+  text-decoration-color: rgba(81, 68, 35, 0.5);
+  text-decoration-thickness: 1px;
+}
+
+/* ---------- 18.10 "点一下就能回来改"的克制提示 ---------- */
+/* 只对段落做：整块正文都亮会显得脏。背景压在字下面、不改变任何尺寸，
+   所以鼠标扫过时文字不会跳。 */
+.xm-text[data-md="1"] > .xm-md-p:hover {
+  background: rgba(255, 255, 255, 0.34);
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.34);
+}
+
+/* 触屏/键盘用户没有 hover：聚焦时给同样的提示，别让"能点"这件事只对鼠标可见 */
+.xm-text[data-md="1"]:focus-visible > .xm-md-p:focus-within,
+.xm-text[data-md="1"] > .xm-md-p:active {
+  background: rgba(255, 255, 255, 0.34);
+  border-radius: 4px;
+}
+
+/* ==========================================================================
+   19. 便签「收起 / 锁定 / 搜索高亮」
+   --------------------------------------------------------------------------
+   收起：只留 64px 标题条，正文/页脚整个拿掉（窗口高度由 Rust 改）；
+   锁定：内容只读，纸面角落盖一枚小锁，拖动/换色照旧；
+   高亮：面板搜索命中的字用琥珀色底（mark.xm-hit）。
+   ========================================================================== */
+
+/* ---------- 19.1 工具按钮浮到拖动条之上 ----------
+   拖动条是 position:absolute + z-index:4 的透明层，排在它后面的静态元素
+   默认画在它下面；纸面又是旋转过的，圆角/斜边附近就容易"点图标变成点纸面"。
+   给按钮组自己的层级，点下去永远命中按钮，不会误触到纸面。 */
+.xm-note__tools {
+  position: relative;
+  z-index: 6;
+}
+
+/* ---------- 19.2 收起态 ---------- */
+/* 收起/展开的"高度"动画由 Rust 端逐帧改窗口尺寸完成（CSS 管不到原生窗口高度）；
+   这里负责内容：正文和页脚淡出/淡入 + 略往上收，收起时窗口变矮才不会显得"内容被切掉"。 */
+.xm-note__body,
+.xm-note__foot {
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+.xm-note[data-collapsed="1"] .xm-note__body,
+.xm-note[data-collapsed="1"] .xm-note__foot,
+.xm-note[data-collapsed="1"] .xm-pop {
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    opacity 110ms ease,
+    transform 110ms ease,
+    visibility 0s linear 110ms;
+}
+/* 展开时内容稍晚一点出现，等窗口先长高，避免文字挤在 64px 里闪一下 */
+.xm-note:not([data-collapsed="1"]) .xm-note__body,
+.xm-note:not([data-collapsed="1"]) .xm-note__foot {
+  transition:
+    opacity 150ms ease 60ms,
+    transform 150ms ease 60ms;
+}
+.xm-note[data-collapsed="1"] .xm-note__paper {
+  /* 64px 窗口里让标题行垂直居中（实测 14/5 上下一半一半，别照着拖动条 26px 去留） */
+  padding-top: 14px;
+  padding-bottom: 5px;
+}
+.xm-note[data-collapsed="1"] .xm-note__head {
+  margin-bottom: 0;
+}
+.xm-note[data-collapsed="1"] .xm-note__title {
+  /* 收起态点哪儿都是"展开"：指针给个暗示，别让人以为这条死纸点不动 */
+  cursor: pointer;
+}
+.xm-note[data-collapsed="1"] .xm-note__paper:hover {
+  filter: brightness(1.015);
+}
+/* 收起后纸面薄了，影子别还按整张纸的大小铺 */
+.xm-note[data-collapsed="1"] .xm-note__paper {
+  box-shadow:
+    inset 0 0 0 1px rgba(196, 146, 36, 0.16),
+    0 1px 2px rgba(120, 90, 30, 0.22),
+    0 8px 16px -8px rgba(120, 90, 30, 0.28);
+}
+.xm-note[data-collapsed="1"] .xm-note__lock {
+  display: none;
+}
+/* 收起态只留"展开"这一颗按钮，其余 tools 全藏起来：
+   64px 高的窗口里放不下菜单，点别的也只会被裁掉 */
+.xm-note[data-collapsed="1"] .xm-note__tools .xm-btn--icon:not([data-act="expand"]) {
+  display: none;
+}
+.xm-note[data-collapsed="1"] .xm-note__tools [data-act="expand"] {
+  /* 一颗浅浅的小方钮：条子只剩一行，纯箭头太不显眼，给点底味让人看得出"这里能点" */
+  color: var(--xm-ink-soft);
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgba(196, 146, 36, 0.18);
+}
+.xm-note[data-collapsed="1"] .xm-note__tools [data-act="expand"]:hover {
+  color: var(--xm-ink);
+}
+/* 展开态不需要"展开"按钮 */
+.xm-note:not([data-collapsed="1"]) .xm-note__tools [data-act="expand"] {
+  display: none;
+}
+
+/* ---------- 19.3 锁定态 ---------- */
+.xm-note[data-locked="1"] .xm-sheet__inner,
+.xm-note[data-locked="1"] .xm-todos {
+  cursor: default;
+}
+.xm-note[data-locked="1"] .xm-sheet__inner {
+  caret-color: transparent;
+}
+/* 锁定的小锁：纸角一枚 13px 的墨色小章，不抢内容、不吃点击 */
+.xm-note__lock {
+  position: absolute;
+  top: 7px;
+  left: 12px;
+  z-index: 7;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  color: var(--xm-ink-meta, var(--xm-ink-soft));
+  opacity: 0.56;
+  pointer-events: none;
+}
+.xm-note__lock[hidden] {
+  display: none;
+}
+.xm-note__lock svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+/* 锁定后待办那几颗按钮别再亮着 hover（本来就是 disabled） */
+.xm-note[data-locked="1"] .xm-todo__check:disabled,
+.xm-note[data-locked="1"] .xm-todo__due:disabled,
+.xm-note[data-locked="1"] .xm-todo__del:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ---------- 19.4 面板搜索命中高亮 ---------- */
+mark.xm-hit {
+  padding: 0 1px;
+  border-radius: 2px;
+  background: rgba(217, 145, 43, 0.32);
+  color: inherit;
+  box-shadow: 0 0 0 1px rgba(217, 145, 43, 0.16);
+}
+
+/* ---------- 19.5 菜单里的「收起 / 锁定」 ---------- */
+.xm-pop__item[data-act="collapse"],
+.xm-pop__item[data-act="lock"] {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+/* ---------- 19.6 设置页「恢复」按钮的二次确认态（与回收站清空同一套砖红） ---------- */
+.xm-settings .xm-btn[data-confirm="1"],
+.xm-settings .xm-btn[data-confirm="1"]:hover {
+  color: #fff8ef;
+  background: linear-gradient(160deg, #a24a37, #8b3a2a);
+  border-color: rgba(110, 44, 30, 0.6);
+  font-weight: 600;
+}
+.xm-settings .xm-btn[data-confirm="1"] svg {
+  color: #fff8ef;
+}
+
+/* ==========================================================================
+   20. 修改记录：版本详情层 .xm-version
+   --------------------------------------------------------------------------
+   面板里点开某个历史版本时，像从面板里抽出一张纸盖上去：
+   - .xm-version 是 .xm-panel 的直接子元素，absolute inset:0，盖住 head/actions/footer；
+   - 里面 .xm-version__paper 铺满，纸色/纸纹沿用面板那张纸，但更干净；
+   - 结构：__head（时间 + 字数 + 返回）固定 / __scroll（标题 + 正文或待办）自己滚 / __foot（恢复）固定。
+   初始带 hidden 属性，所以这里要先兜底 display:none（否则 display:flex 会盖掉 hidden）。
+   ========================================================================== */
+.xm-version[hidden] {
+  display: none;
+}
+.xm-version {
+  position: absolute;
+  inset: 0;
+  z-index: 24;
+  display: flex;
+  border-radius: var(--xm-radius-panel);
+  animation: xm-version-in 120ms var(--xm-ease-out) backwards;
+}
+
+/* 铺满面板的那张纸：和便签同一族暖黄，比面板略亮一档（"抽出来的一张"） */
+.xm-version__paper {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: inherit;
+  background-color: var(--xm-sheet-a);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0) 16%),
+    linear-gradient(0deg, rgba(146, 108, 16, 0.08) 0%, rgba(146, 108, 16, 0) 12%),
+    var(--xm-tex),
+    repeating-linear-gradient(96deg, rgba(120, 86, 18, 0.035) 0 1px, rgba(120, 86, 18, 0) 1px 7px),
+    linear-gradient(165deg, var(--xm-sheet-a) 0%, var(--xm-sheet-b) 58%, var(--xm-sheet-c) 100%);
+  background-blend-mode: normal, normal, soft-light, normal, normal;
+  box-shadow:
+    inset 0 0 0 1px rgba(120, 88, 20, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 2px 6px rgba(120, 90, 30, 0.1),
+    0 10px 24px -12px rgba(120, 90, 30, 0.26);
+  overflow: hidden;
+}
+
+/* ---------- 20.1 顶部固定条：时间 / 字数 / 返回 ---------- */
+.xm-version__head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 12px 8px 16px;
+  border-bottom: 1px solid rgba(120, 88, 20, 0.12);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+.xm-version__time {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--xm-font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--xm-ink-soft);
+}
+.xm-version__chars {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-family: var(--xm-font-ui);
+  font-size: 10.5px;
+  color: var(--xm-ink-faint);
+  white-space: nowrap;
+}
+.xm-version__head .xm-btn {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  font-size: 11.5px;
+}
+
+/* ---------- 20.2 正文滚动区（滚动条细、不抢纸感） ---------- */
+.xm-version__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 12px 16px 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(140, 108, 40, 0.28) transparent;
+}
+.xm-version__scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.xm-version__scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.xm-version__scroll::-webkit-scrollbar-thumb {
+  background: rgba(140, 108, 40, 0.24);
+  border-radius: 3px;
+}
+.xm-version__scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 108, 40, 0.36);
+}
+.xm-version__title {
+  margin: 0 0 8px;
+  font-family: var(--xm-font-hand);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--xm-ink-strong);
+  overflow-wrap: anywhere;
+}
+.xm-version__text {
+  margin: 0;
+  font-family: var(--xm-font-hand);
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--xm-ink);
+  /* 历史正文要原样保留换行：备忘录里的分行、空行都算内容 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.xm-version__text:empty::before {
+  content: "（这个版本没有正文）";
+  color: var(--xm-ink-faint);
+}
+
+/* ---------- 20.3 待办版本：只读列表，完成项画墨线 ---------- */
+.xm-version__todos {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.xm-version__todo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-family: var(--xm-font-hand);
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--xm-ink);
+}
+/* 复选框：和便签里那枚一样是纸上的小方框，只读、不可点 */
+.xm-version__todo-check {
+  position: relative;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 4px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(150, 116, 30, 0.42);
+}
+.xm-version__todo[data-done="1"] .xm-version__todo-check {
+  background: linear-gradient(160deg, #ffe9a8, #f5c65a);
+  box-shadow:
+    inset 0 0 0 1px rgba(160, 110, 20, 0.45),
+    0 1px 1px rgba(96, 70, 14, 0.12);
+}
+/* 勾：两笔短横拼出来，不用图片 */
+.xm-version__todo[data-done="1"] .xm-version__todo-check::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  width: 8px;
+  height: 4px;
+  border-left: 1.7px solid #6b4a0f;
+  border-bottom: 1.7px solid #6b4a0f;
+  transform: rotate(-45deg);
+}
+.xm-version__todo-text {
+  position: relative;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.xm-version__todo[data-done="1"] .xm-version__todo-text {
+  color: var(--xm-ink-soft);
+}
+/* 完成项的墨线：从字头到字尾轻轻划过去（和便签里 M1 的划线同一种感觉） */
+.xm-version__todo[data-done="1"] .xm-version__todo-text::after {
+  content: "";
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  top: 52%;
+  height: 1.4px;
+  background: var(--xm-strike);
+  opacity: 0.85;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+/* ---------- 20.4 底部固定条：恢复按钮 ---------- */
+.xm-version__foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 9px 14px 12px;
+  border-top: 1px solid rgba(120, 88, 20, 0.1);
+  background: linear-gradient(0deg, rgba(255, 246, 214, 0.62), rgba(255, 246, 214, 0));
+}
+.xm-version__foot .xm-btn {
+  min-width: 126px;
+}
+
+@keyframes xm-version-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.996);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xm-version {
+    animation: none;
+  }
+}
+
+
+/* ==========================================================================
+   21. 第三种便签「随身笔记」.xm-vault
+   --------------------------------------------------------------------------
+   一条 = 名字 + 内容（可打码）+ 备注，点一下复制。
+   视觉上它不是"表格"，而是一页手写清单：
+     - 行与行之间只有一条极淡的虚线（像用铅笔轻轻划的分隔）；
+     - 名字用加强墨、600 字重，一眼能扫到；
+     - 内容是"打字机感"的次要墨色（等宽系统字体，中文自动回退文楷）；
+     - 备注再淡一档、再小一档，像随手补在下面的小字。
+   打码不画"锁"、不做灰块：前端把明文换成 •，这里只负责
+   "点阵略淡 + 字距拉开"，让它像被遮住的一行字，而不是坏掉的字符。
+
+   DOM（前端按此实现）：
+   .xm-vault（唯一滚动层，已并入 §4.1 / §6 的纸边渐隐）
+     > .xm-vault__row[data-id][data-copied][data-masked][data-editing]
+         > .xm-vault__main > __label + __value + __hint
+         > .xm-vault__tools > 三个 .xm-btn--icon
+     > .xm-vault__empty
+     > .xm-vault__actions > .xm-vault__add + .xm-vault__all
+   ========================================================================== */
+
+/* ---------- 21.1 清单容器 ---------- */
+/* 滚动能力（overflow / 隐藏滚动条 / mask 渐隐 / overscroll）全部来自 §4.1，
+   这里只补"怎么排"：纵向一列，短便签时也铺满正文区，底部按钮贴住内容末尾。 */
+.xm-note .xm-vault {
+  display: flex;
+  flex-direction: column;
+  padding: 1px 2px 4px;
+  font-family: var(--xm-font-ui);
+  color: var(--xm-ink);
+}
+
+/* ---------- 21.2 一行一条 ---------- */
+.xm-vault__row {
+  position: relative;
+  /* isolation 让"复制高亮"的 ::before 能压到行底色之上、文字之下 */
+  isolation: isolate;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 2px 6px;
+  border-radius: 6px;
+  transition: background-color var(--xm-dur-quick) var(--xm-ease-out);
+}
+/* 行间分隔：只画在"两行之间"，第一行上方和最后一行下方都不留线 */
+.xm-vault__row + .xm-vault__row {
+  border-top: 1px dashed rgba(90, 68, 20, 0.16);
+}
+.xm-vault__row:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* 左侧正文：名字 / 内容 / 备注 三行叠起来 */
+.xm-vault__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  cursor: pointer;
+}
+.xm-vault__label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--xm-font-ui);
+  /* 名字跟字号缩放：1.3 档也不会比正文小 */
+  font-size: calc(var(--xm-font-base) * 0.9375);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0.2px;
+  color: var(--xm-ink-strong, var(--xm-ink));
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+
+/* 内容：等宽/打字机感。中文在 Consolas 里没有字形，会自动落到
+   "XM WenKai"（--xm-font-ui），所以英文数字像打字机、中文仍像手写，不会花。 */
+.xm-vault__value {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: "Cascadia Mono", Consolas, "Courier New", var(--xm-font-ui);
+  font-size: calc(var(--xm-font-base) * 0.875);
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+  color: var(--xm-ink-soft);
+}
+
+/* 打码态：点阵比正常内容再淡一点、字距拉开，像被一层薄纸盖住。
+   前端把明文换成「前 4 位 + 6 个 •」，这里只调视觉，不改字。 */
+.xm-vault__row[data-masked="1"] .xm-vault__value,
+.xm-vault__value[data-masked="1"] {
+  color: var(--xm-vault-dot);
+  letter-spacing: 0.12em;
+  font-family: var(--xm-font-ui);
+  /* 点阵加一点点白描边，纸纹从点里透出来时不至于糊成一团 */
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.34);
+}
+
+/* 备注：11.5px 淡墨，有才显示 */
+.xm-vault__hint {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--xm-font-ui);
+  font-size: calc(var(--xm-font-base) * 0.71875);
+  line-height: 1.5;
+  color: var(--xm-ink-faint);
+}
+
+/* 右侧三个小工具：默认淡到几乎看不见，hover 整行才浮出来，
+   不挤名字——固定 3×22px 宽，靠右对齐。 */
+.xm-vault__tools {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0;
+  width: 66px;
+  margin-top: -1px;
+}
+.xm-vault__tools .xm-btn--icon {
+  width: 22px;
+  height: 22px;
+  padding: 3.5px;
+  border-radius: 6px;
+  opacity: 0.55;
+  transition:
+    opacity var(--xm-dur-quick) var(--xm-ease-out),
+    background-color var(--xm-dur-quick) var(--xm-ease-out),
+    transform var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-vault__row:hover .xm-vault__tools .xm-btn--icon,
+.xm-vault__row:focus-within .xm-vault__tools .xm-btn--icon,
+.xm-vault__tools .xm-btn--icon:focus-visible {
+  opacity: 1;
+}
+.xm-vault__tools .xm-btn--icon:active {
+  transform: scale(0.9);
+}
+/* 眼睛处于「已显示明文」时别再压到 .55：琥珀底被透明度一压就发灰，
+   给一个比默认高、比 hover 略低的常驻透明度，状态一眼能看出来。 */
+.xm-vault__tools .xm-btn--icon[data-active="1"] {
+  opacity: 0.9;
+  color: var(--xm-accent-ink);
+}
+/* 编辑态只留一个「完成」按钮，不再显示三个 icon */
+.xm-vault__done {
+  min-width: 0;
+  padding: 3px 9px;
+  font-size: calc(var(--xm-font-base) * 0.6875);
+  line-height: 18px;
+}
+
+/* ---------- 21.3 复制反馈：120ms 暖黄高亮 + 行尾「已复制」 ---------- */
+/* 用伪元素而不是改背景色：
+   ① 不改变行高、不位移；
+   ② 高亮只覆盖 1px 内缩的一小块，圆角和行一致；
+   ③ 伪元素在文字下面，字始终清楚。 */
+.xm-vault__row[data-copied="1"]::before {
+  content: "";
+  position: absolute;
+  inset: 1px 0;
+  z-index: -1;
+  border-radius: 6px;
+  background: linear-gradient(
+    100deg,
+    var(--xm-vault-copy) 0%,
+    rgba(255, 226, 150, 0.16) 72%,
+    rgba(255, 226, 150, 0) 100%
+  );
+  pointer-events: none;
+  animation: xm-vault-copy 900ms var(--xm-ease-out) forwards;
+}
+.xm-vault__row[data-copied="1"]::after {
+  content: "已复制";
+  position: absolute;
+  right: 72px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 250, 226, 0.82);
+  font-family: var(--xm-font-ui);
+  font-size: 10px;
+  line-height: 15px;
+  letter-spacing: 0.3px;
+  color: var(--xm-accent-ink);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  animation: xm-vault-copied 120ms var(--xm-ease-out) forwards;
+}
+
+/* ---------- 21.4 编辑态：三个输入框原位替换 ---------- */
+.xm-vault__row[data-editing="1"] {
+  background: rgba(255, 255, 255, 0.34);
+  box-shadow: inset 0 0 0 1px rgba(196, 146, 36, 0.22);
+}
+.xm-vault__input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: inset 0 0 0 1px rgba(150, 116, 30, 0.2);
+  font-family: var(--xm-font-hand);
+  font-size: calc(var(--xm-font-base) * 0.875);
+  line-height: 1.5;
+  color: var(--xm-ink);
+  outline: 0;
+  transition:
+    background-color var(--xm-dur-quick) var(--xm-ease-out),
+    box-shadow var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-vault__input::placeholder {
+  color: var(--xm-ink-faint);
+}
+.xm-vault__input:focus {
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow:
+    inset 0 0 0 1px rgba(196, 146, 36, 0.5),
+    0 0 0 2px rgba(217, 145, 43, 0.14);
+}
+/* 名字的输入框稍大、加粗，和显示态的名字对齐 */
+.xm-vault__input[data-field="label"] {
+  font-size: calc(var(--xm-font-base) * 0.9375);
+  font-weight: 600;
+  color: var(--xm-ink-strong, var(--xm-ink));
+}
+/* 内容输入框保持打字机感 */
+.xm-vault__input[data-field="value"] {
+  font-family: "Cascadia Mono", Consolas, "Courier New", var(--xm-font-ui);
+  letter-spacing: 0.01em;
+}
+/* 备注输入框更小更淡，像写在下面的补充 */
+.xm-vault__input[data-field="note"] {
+  font-size: calc(var(--xm-font-base) * 0.75);
+  color: var(--xm-ink-soft);
+}
+
+/* ---------- 21.5 空态 / 「＋ 再记一条」/「复制全部」 ---------- */
+.xm-vault__empty {
+  flex: 0 0 auto;
+  padding: 26px 12px 22px;
+  text-align: center;
+  font-family: var(--xm-font-hand);
+  font-size: calc(var(--xm-font-base) * 0.8125);
+  line-height: 1.9;
+  color: var(--xm-ink-soft);
+}
+
+/* 底部两个动作：左边虚线胶囊（轻量的"写点什么"），右边小 ghost。
+   放在滚动内容末尾，跟着列表一起滚；不 sticky——便签很小，
+   常驻按钮会一直压住最后一条记录。 */
+.xm-vault__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 2px 2px;
+}
+
+/* 「＋ 再记一条」：整条虚线胶囊，不是实心按钮 */
+.xm-vault__add {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 固定 28px 高：行内胶囊要"薄"；不依赖文字行盒，避免中英混排把按钮撑高 */
+  height: 28px;
+  min-height: 28px;
+  justify-content: center;
+  padding: 0 12px;
+  border: 1px dashed rgba(120, 88, 20, 0.32);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  box-shadow: none;
+  font-size: calc(var(--xm-font-base) * 0.71875);
+  color: var(--xm-ink-soft);
+  transition:
+    background-color var(--xm-dur-quick) var(--xm-ease-out),
+    border-color var(--xm-dur-quick) var(--xm-ease-out),
+    color var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-vault__add:hover {
+  transform: none;
+  border-color: rgba(196, 146, 36, 0.6);
+  background: rgba(255, 255, 255, 0.52);
+  color: var(--xm-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+.xm-vault__add:active {
+  transform: none;
+  background: rgba(255, 255, 255, 0.36);
+}
+
+/* 「复制全部」：右下角小 ghost，平常很淡，悬停才提起来 */
+.xm-vault__all {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 2px 9px;
+  border-color: transparent;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(120, 90, 20, 0.14);
+  font-size: calc(var(--xm-font-base) * 0.65625);
+  color: var(--xm-ink-soft);
+}
+.xm-vault__all:hover {
+  transform: none;
+  background: rgba(255, 255, 255, 0.52);
+  box-shadow: inset 0 0 0 1px rgba(150, 116, 30, 0.26);
+  color: var(--xm-ink);
+}
+
+/* 便签页脚也允许放「复制全部」：靠右、别和字数挤在一起 */
+.xm-note__foot .xm-vault__all {
+  margin-left: auto;
+  min-height: 22px;
+  padding: 1px 8px;
+}
+
+/* ==========================================================================
+   21.6 面板：新增按钮 / 角标 / 卡片里的随身笔记预览
+   ========================================================================== */
+/* 操作区现在有 备忘 / 待办 / 随身笔记 / 粘贴 / 回收站 / 齿轮 六个，
+   420 宽必须一行放下：统一收一点内边距和字号，图标按钮保 30px 的可点面积。 */
+.xm-panel__actions {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.xm-panel__actions .xm-btn {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  font-size: 11.5px;
+  line-height: 16px;
+  gap: 4px;
+}
+.xm-panel__actions .xm-btn svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+.xm-panel__actions .xm-btn--icon {
+  width: 30px;
+  height: 30px;
+  padding: 7px;
+}
+.xm-panel__actions .xm-btn--icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* 角标：随身笔记=黛青小印 */
+.xm-card[data-kind="vault"] .xm-card__badge {
+  background: var(--xm-badge-vault-bg);
+  box-shadow: inset 0 0 0 1px rgba(74, 90, 122, 0.24);
+  color: var(--xm-badge-vault-ink);
+}
+
+/* 卡片里的预览：每行一条「名字 · 打码内容」，最多 3 行，再补一句"还有 N 条" */
+.xm-card__vault {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  margin: 1px 0 0;
+  font-family: var(--xm-font-ui);
+}
+.xm-card__vault-row {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--xm-ink);
+}
+/* 行内两层结构（名字 / 内容）：名字压深一点，内容淡一点。 */
+.xm-card__vault-row b {
+  font-weight: 600;
+  color: var(--xm-ink-strong, var(--xm-ink));
+}
+.xm-card__vault-row .xm-card__vault-value {
+  /* 分隔符「 · 」由 DOM 里的文本给，这里不再补 margin，避免双重留白 */
+  font-family: "Cascadia Mono", Consolas, "Courier New", var(--xm-font-ui);
+  font-size: 12px;
+  color: var(--xm-ink-soft);
+}
+.xm-card__vault-row[data-masked="1"],
+.xm-card__vault-row .xm-card__vault-value[data-masked="1"] {
+  color: var(--xm-vault-dot);
+  letter-spacing: 0.12em;
+}
+.xm-card__vault-more {
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--xm-ink-faint);
+}
+
+/* ==========================================================================
+   21.7 版本详情层里的随身笔记（只读快照）
+   ========================================================================== */
+.xm-version__vault {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.xm-version__vault-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 0 7px;
+  border-bottom: 1px dashed rgba(90, 68, 20, 0.16);
+  font-family: var(--xm-font-hand);
+  font-size: calc(var(--xm-font-base) * 0.9375);
+  line-height: 1.6;
+}
+.xm-version__vault-row:last-child {
+  border-bottom: 0;
+}
+.xm-version__vault-row b {
+  flex: 0 0 auto;
+  max-width: 44%;
+  font-weight: 600;
+  color: var(--xm-ink-strong, var(--xm-ink));
+}
+.xm-version__vault-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: "Cascadia Mono", Consolas, "Courier New", var(--xm-font-ui);
+  font-size: calc(var(--xm-font-base) * 0.875);
+  color: var(--xm-ink-soft);
+  overflow-wrap: anywhere;
+}
+.xm-version__vault-row[data-masked="1"] .xm-version__vault-value,
+.xm-version__vault-value[data-masked="1"] {
+  color: var(--xm-vault-dot);
+  letter-spacing: 0.12em;
+}
+
+/* ---------- 21.8 关键帧 ---------- */
+@keyframes xm-vault-copy {
+  from {
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes xm-vault-copied {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
+}
+
+/* ---------- 21.9 无障碍：关掉动效时直接给出结果 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .xm-vault__row,
+  .xm-vault__tools .xm-btn--icon,
+  .xm-vault__input,
+  .xm-vault__add {
+    transition: none;
+  }
+  .xm-vault__row[data-copied="1"]::before {
+    animation: none;
+    opacity: 0.55;
+  }
+  .xm-vault__row[data-copied="1"]::after {
+    animation: none;
+    opacity: 1;
+    transform: translateY(-50%);
+  }
+}
+
+/* ==========================================================================
+   22. 修改记录：差异 / 全文切换
+   --------------------------------------------------------------------------
+   用户要「像 GitHub 提交那样看到改了哪几个字」，但明确不要左右并排——
+   所以差异仍是一段连续的原文，只把增删的字用低饱和的荧光笔标出来：
+   新增 = 墨绿底 + 细下划线（绿笔划过），删除 = 淡朱红底 + 删除线（红笔划掉）。
+   底色只有 12%~16%，压的是字色而不是盖一块纯色，落在暖黄纸上才像"纸面标记"。
+   ========================================================================== */
+
+/* ---------- 22.1 头部「差异 / 全文」小胶囊 ---------- */
+/* 头里现在有四样：时间、统计、模式、返回。420 面宽的内宽是 392：
+   统计文字最长（"第 12 版 · 较上一版 +123 −45 字"），让它可收缩 + 省略；
+   模式组和返回按钮绝不压缩——按钮被挤到第二行，比统计被截掉一截更难看。 */
+.xm-version__chars {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+}
+
+.xm-version__modes {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(140, 105, 30, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(140, 105, 30, 0.14);
+}
+
+/* 模式按钮同时带着 .xm-btn.xm-btn--ghost：要盖掉幽灵按钮的描边、纸底和 hover 浮起，
+   只留"胶囊里的一小片纸"。选择器比 .xm-version__head .xm-btn 多一层，确保生效。 */
+.xm-version__modes .xm-version__mode {
+  position: relative;
+  isolation: isolate;
+  flex: 0 0 auto;
+  height: 20px;
+  min-height: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 10.5px;
+  line-height: 20px;
+  color: var(--xm-ink-soft);
+  cursor: pointer;
+  transition: color var(--xm-dur-quick) var(--xm-ease-out);
+}
+/* 选中态用 ::before 铺那块暖黄纸片：opacity 交叉淡入 120ms，
+   和 .xm-seg__item 的激活观感一致（background-image 本身不过渡，直接切会"啪"一下）。 */
+.xm-version__modes .xm-version__mode::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(160deg, #fffdf4, #ffe9a8);
+  box-shadow:
+    0 1px 2px rgba(96, 70, 14, 0.18),
+    inset 0 0 0 1px rgba(150, 116, 30, 0.26);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--xm-ease-out);
+}
+.xm-version__modes .xm-version__mode:hover {
+  transform: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--xm-ink);
+}
+.xm-version__modes .xm-version__mode[data-active="1"] {
+  color: var(--xm-ink);
+  font-weight: 600;
+}
+.xm-version__modes .xm-version__mode[data-active="1"]::before {
+  opacity: 1;
+}
+/* 最早一版没有上一版：两个模式都不能点。全局 .xm-btn:disabled 已给 opacity .45 +
+   saturate(.5)，这里再补一点灰度并明确禁止 hover 反馈，别让人以为没生效。 */
+.xm-version__modes .xm-version__mode:disabled,
+.xm-version__modes .xm-version__mode:disabled:hover,
+.xm-version__modes .xm-version__mode:disabled:active {
+  opacity: 0.45;
+  filter: grayscale(0.45) saturate(0.5);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  cursor: not-allowed;
+}
+.xm-version__modes .xm-version__mode:disabled::before {
+  opacity: 0;
+}
+
+/* ---------- 22.2 差异正文 ---------- */
+/* 用 flex 列布局是为了"吃掉"前端拼 HTML 时留下的换行空白：
+   .xm-version__text 本身是 pre-wrap（最早一版要原样渲染普通文本），
+   如果 .xm-diff 和 legend 之间有一个换行文本节点，pre-wrap 会把它显示成空行；
+   而 flex 容器里"只含空白的文本节点"不会生成 flex item，正好把这段空白丢掉。
+   pre-wrap 仍会被真实文本节点继承，所以最早一版的全文换行不受影响。 */
+.xm-version__text[data-mode="diff"] {
+  display: flex;
+  flex-direction: column;
+  animation: xm-diff-mode-in-a 120ms var(--xm-ease-out) backwards;
+}
+/* 两个模式用两个不同名的 keyframes：前端只改 data-mode 时，animation-name 变了，
+   120ms 淡入会重新跑一遍——不需要前端再加一次性的 class。 */
+.xm-version__text[data-mode="full"] {
+  animation: xm-diff-mode-in-b 120ms var(--xm-ease-out) backwards;
+}
+
+.xm-diff {
+  margin: 0;
+  font-family: inherit;
+  font-size: inherit;
+  /* 差异行距要比全文（1.75）松一点，否则增删块的上下边界糊在一起看不清 */
+  line-height: 1.9;
+  color: var(--xm-ink);
+  /* 差异是按原文算的，换行必须原样保留，不能重排 */
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+/* 没变的字保持普通墨色；显式写出来是为了不让外层背景/颜色意外继承 */
+.xm-diff__same {
+  color: inherit;
+}
+/* 增删标记：高亮只铺在字上，像荧光笔；行首行尾各 1px 内边距让色块不切字。
+   box-decoration-break: clone 让一段跨行的标记在每一行都各自圆角，而不是断成两截。 */
+.xm-diff__add,
+.xm-diff__del {
+  padding: 0 1px;
+  border-radius: 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.xm-diff__add {
+  background: var(--xm-diff-add-bg);
+  color: var(--xm-diff-add-ink);
+  border-bottom: 1px solid var(--xm-diff-add-line);
+}
+.xm-diff__del {
+  background: var(--xm-diff-del-bg);
+  color: var(--xm-diff-del-ink);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+/* 提示行（最早一版 / 这一版没有变化）：一行小字，斜体，像纸边上的铅笔注 */
+.xm-diff__note {
+  margin: 8px 0;
+  font-family: var(--xm-font-hand);
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.7;
+  color: var(--xm-ink-meta);
+  white-space: normal;
+}
+/* 图例：右下角，两个 9px 小色块 + 文字。父级 pre-wrap 对 legend 内部无效化，
+   否则"新增"和色块之间的换行会变成空行。 */
+.xm-diff__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  margin-top: 10px;
+  font-family: var(--xm-font-ui);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--xm-ink-meta);
+  white-space: normal;
+}
+.xm-diff__swatch {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+.xm-diff__swatch--add {
+  background: rgba(74, 106, 78, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(47, 82, 54, 0.38);
+}
+.xm-diff__swatch--del {
+  background: rgba(178, 61, 47, 0.26);
+  box-shadow: inset 0 0 0 1px rgba(143, 58, 47, 0.34);
+}
+/* 两组图例之间留出呼吸：第二个色块前多加一点边距 */
+.xm-diff__swatch:nth-of-type(2) {
+  margin-left: 8px;
+}
+
+/* ---------- 22.3 随身笔记条目的差异（按名字对比，绝不出现 value 明文） ---------- */
+.xm-diff__item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 5px;
+  padding: 4px 8px 4px 9px;
+  border-radius: 6px;
+  font-family: var(--xm-font-hand);
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: normal;
+}
+.xm-diff__item:last-child {
+  margin-bottom: 0;
+}
+.xm-diff__item b {
+  font-weight: 600;
+}
+.xm-diff__item span {
+  font-size: 0.82em;
+  opacity: 0.78;
+}
+.xm-diff__item--add {
+  color: var(--xm-diff-add-ink);
+  background: rgba(74, 106, 78, 0.12);
+  box-shadow: inset 2px 0 0 rgba(47, 82, 54, 0.5);
+}
+.xm-diff__item--del {
+  color: var(--xm-diff-del-ink);
+  background: rgba(178, 61, 47, 0.1);
+  box-shadow: inset 2px 0 0 rgba(143, 58, 47, 0.48);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.xm-diff__item--same {
+  padding-left: 2px;
+  border-radius: 0;
+  border-bottom: 1px dashed rgba(90, 68, 20, 0.14);
+  color: var(--xm-ink-soft);
+  background: transparent;
+  box-shadow: none;
+}
+
+@keyframes xm-diff-mode-in-a {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes xm-diff-mode-in-b {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---------- 22.4 无障碍：关掉动效时直接给出结果 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .xm-version__modes .xm-version__mode,
+  .xm-version__modes .xm-version__mode::before {
+    transition: none;
+  }
+  .xm-version__text[data-mode="diff"],
+  .xm-version__text[data-mode="full"] {
+    animation: none;
+  }
+}
+
+/* ==========================================================================
+   23. 面板筛选条 .xm-filters / 纸片按钮 .xm-chip
+   --------------------------------------------------------------------------
+   不是网页那种"胶囊筛选器"，而是一排贴在面板纸上的小纸片：
+   平常只是很淡的暖褐描边，选中的那个像被笔涂过一层琥珀；
+   颜色筛选把颜色做成小圆点，一行能放下七种而不挤。
+   420px 宽的面板里三组会自动折行（flex-wrap），组本身不拆散。
+   ========================================================================== */
+.xm-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 9px;
+  margin: 0;
+  padding: 0 1px 1px;
+  font-family: var(--xm-font-ui);
+  font-size: 11px;
+  color: var(--xm-ink-soft);
+}
+/* 一组筛选（时间 / 类型 / 颜色）：组内 4px、组间 9px，
+   折行时整组一起走，不会出现"时间组的一半在上一行"这种断法。 */
+.xm-filters__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+/* 时间组和类型组各有一个「全部」，光靠间距分不清是两组：
+   在类型组前面画一道很短的虚线，像便签上随手划的一道分隔，
+   比加标题更轻，也不会把 420px 的面板挤满。 */
+.xm-filters__group[data-group="kind"]::before {
+  content: "";
+  align-self: center;
+  width: 1px;
+  height: 13px;
+  margin: 0 1px;
+  border-radius: 1px;
+  /* 用当前墨色而不是写死的暖褐：夜间纸变深时这道线会自动跟着变浅，
+     不会像一条脏印子一样留在暗色纸面上。两头淡出，中段实一点。 */
+  background: currentColor;
+  opacity: 0.26;
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    #000 22%,
+    #000 78%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    #000 22%,
+    #000 78%,
+    transparent 100%
+  );
+}
+/* 面板窄到放不下两组时，分隔线会跑到行首变成"多余的短线"，
+   这种时候干脆不画：折行本身已经说明是两组了。 */
+@media (max-width: 375px) {
+  .xm-filters__group[data-group="kind"]::before {
+    display: none;
+  }
+}
+
+/* ---------- 23.1 小纸片按钮 ---------- */
+.xm-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  box-sizing: border-box;
+  height: 21px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 999px;
+  /* 淡暖底 + 1px 内描边：像用淡褐铅笔画的一个小圈 */
+  background: rgba(120, 88, 20, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(120, 88, 20, 0.14);
+  font-family: var(--xm-font-ui);
+  font-size: 11px;
+  line-height: 21px;
+  color: var(--xm-ink-soft);
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  transition:
+    background-color var(--xm-dur-quick) var(--xm-ease-out),
+    color var(--xm-dur-quick) var(--xm-ease-out),
+    box-shadow var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-chip:hover {
+  background: rgba(255, 255, 255, 0.52);
+  color: var(--xm-ink);
+}
+.xm-chip:focus-visible {
+  outline: 2px solid var(--xm-accent);
+  outline-offset: 1px;
+}
+/* 选中：一小片琥珀色被涂在纸片上，字压深，读起来像"这一条被圈住了" */
+.xm-chip[data-active="1"] {
+  color: var(--xm-ink-strong);
+  font-weight: 600;
+  background: linear-gradient(160deg, #fffdf4, #ffe9a8);
+  box-shadow:
+    inset 0 0 0 1px rgba(150, 116, 30, 0.34),
+    0 1px 2px rgba(96, 70, 14, 0.14);
+}
+
+/* 数字角标：逾期数量这种"要紧的数字"，用琥珀底深字；
+   逾期组单独换成砖红，提醒"这里是有东西过期的"。 */
+.xm-chip__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: rgba(217, 145, 43, 0.28);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 14px;
+  letter-spacing: 0;
+  color: var(--xm-accent-ink);
+}
+.xm-chip__badge:empty {
+  display: none;
+}
+.xm-chip[data-due="overdue"] .xm-chip__badge {
+  background: var(--xm-danger-soft);
+  color: var(--xm-danger);
+}
+
+/* ---------- 23.2 颜色筛选：一颗手绘感的小圆点 ---------- */
+.xm-chip--dot {
+  padding: 0 6px;
+}
+.xm-chip__dot {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--xm-chip-dot, #f0c94a);
+  /* 内圈白高光 + 一圈极淡的墨线：小圆点也有"纸上的颜料"厚度 */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 0 0 1px rgba(90, 68, 20, 0.2);
+}
+.xm-chip--dot[data-color="yellow"] { --xm-chip-dot: #f0c94a; }
+.xm-chip--dot[data-color="pink"] { --xm-chip-dot: #e9a08d; }
+.xm-chip--dot[data-color="mint"] { --xm-chip-dot: #93c49a; }
+.xm-chip--dot[data-color="sky"] { --xm-chip-dot: #8fb8dd; }
+.xm-chip--dot[data-color="lavender"] { --xm-chip-dot: #b39bdd; }
+.xm-chip--dot[data-color="rose"] { --xm-chip-dot: #dd8fa5; }
+/* 「全色」：六个色块拼成一个小色轮，一眼知道它代表全部颜色 */
+.xm-chip--dot[data-color="all"] .xm-chip__dot {
+  background: conic-gradient(
+    #f0c94a 0deg 60deg,
+    #e9a08d 60deg 120deg,
+    #93c49a 120deg 180deg,
+    #8fb8dd 180deg 240deg,
+    #b39bdd 240deg 300deg,
+    #dd8fa5 300deg 360deg
+  );
+}
+
+/* ---------- 23.3 清除筛选 ---------- */
+.xm-filters__clear {
+  flex: 0 0 auto;
+  margin-left: auto;
+  height: 21px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-family: var(--xm-font-ui);
+  font-size: 11px;
+  line-height: 21px;
+  color: var(--xm-ink-soft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition:
+    background-color var(--xm-dur-quick) var(--xm-ease-out),
+    color var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-filters__clear:hover {
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--xm-ink);
+}
+.xm-filters__clear:focus-visible {
+  outline: 2px solid var(--xm-accent);
+  outline-offset: 1px;
+}
+/* 没有筛选时「清除」不该抢注意力：还在原位（不跳动），只是淡到几乎看不见 */
+.xm-filters[data-on="0"] .xm-filters__clear {
+  opacity: 0.36;
+  pointer-events: none;
+  text-decoration-color: transparent;
+}
+
+/* ==========================================================================
+   24. 快速记录 .xm-quick
+   --------------------------------------------------------------------------
+   520x150 的透明小窗，里面正好铺一张暖黄便签纸：
+   上面写、下面一条虚线分出操作栏。窗口是透明的，所以纸边必须自己带投影，
+   否则会像一张平面图贴在屏幕上。
+   ========================================================================== */
+.xm-quick {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 7px 9px 9px;
+  font-family: var(--xm-font-ui);
+  font-size: 13px;
+  color: var(--xm-ink);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 纸：和便签同一套五层叠法，只是更宽更矮 */
+.xm-quick__paper {
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 18px 10px;
+  border-radius: 12px;
+  background-color: var(--xm-paper-a);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 14%),
+    linear-gradient(0deg, rgba(146, 108, 16, 0.12) 0%, rgba(146, 108, 16, 0) 18%),
+    var(--xm-tex),
+    repeating-linear-gradient(96deg, rgba(120, 86, 18, 0.04) 0 1px, rgba(120, 86, 18, 0) 1px 6px),
+    linear-gradient(
+      158deg,
+      var(--xm-paper-a) 0%,
+      var(--xm-paper-b) 34%,
+      var(--xm-paper-c) 76%,
+      var(--xm-paper-d) 100%
+    );
+  background-blend-mode: normal, normal, soft-light, normal, normal;
+  box-shadow: var(--xm-paper-shadow);
+  overflow: hidden;
+  animation: xm-quick-in var(--xm-dur-quick) var(--xm-ease-out) backwards;
+}
+
+/* 右下角折起一小块：和便签同一种"纸"的语言。纯造型，压在操作栏下面 */
+.xm-quick__paper::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+  background: linear-gradient(225deg, #e9cc46 0%, #ffec93 40%, var(--xm-paper-back) 78%);
+  filter: drop-shadow(-2px -2px 2px rgba(110, 82, 14, 0.2));
+  border-bottom-right-radius: 12px;
+}
+
+/* 输入区：手写体、大一点，像真的拿笔在便签上写。
+   内容多了自己滚（窗口只有 150 高），滚动条藏掉。 */
+.xm-quick__input {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 2px 2px 3px;
+  outline: 0;
+  font-family: var(--xm-font-hand);
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--xm-ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  scrollbar-width: none;
+}
+.xm-quick__input::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+/* 占位提示：只在真的空的时候出现。
+   除了 :empty，再兜一个 [data-empty="1"]：contenteditable 删空后常残留 <br>，
+   那时 :empty 不成立，前端可以用 data-empty 标出来。 */
+.xm-quick__input:empty::before,
+.xm-quick__input[data-empty="1"]::before {
+  content: "记点什么…";
+  color: var(--xm-ink-faint);
+  pointer-events: none;
+}
+
+/* ---------- 24.1 底部操作栏 ---------- */
+.xm-quick__bar {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 7px;
+  border-top: 1px dashed var(--xm-line-soft);
+}
+.xm-quick__hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--xm-ink-faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.xm-quick__actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+/* 150 高的窗口里按钮要薄：只缩内边距和字号，高度仍 ≥24px 好点 */
+.xm-quick__actions .xm-btn {
+  min-height: 24px;
+  padding: 2px 10px;
+  font-size: 11.5px;
+}
+
+@keyframes xm-quick-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.996);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ==========================================================================
+   25. 待办拖拽
+   --------------------------------------------------------------------------
+   只有 transform / opacity / 颜色，不动布局尺寸：
+   拖动行"抬起来"一点、落点画一道墨绿线，容器在拖的时候不选中文字。
+   ========================================================================== */
+/* 拖动期间整列都不该被选中，光标也换成"抓着" */
+.xm-todos[data-dragging="1"] {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grabbing;
+}
+
+/* 被拖起来的那一行：纸片浮起（白底 + 内琥珀描边 + 更深投影），不位移
+   （位移交给前端跟手，这里只负责"看起来被拿起来了"） */
+.xm-todo[data-drag="1"] {
+  position: relative;
+  z-index: 5;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow:
+    0 6px 16px -6px var(--xm-shadow-deep),
+    inset 0 0 0 1px rgba(217, 145, 43, 0.4);
+  opacity: 0.94;
+  cursor: grabbing;
+}
+
+/* 落点指示线：2px 墨绿短线，两端各留 4px，像用绿笔在清单上画了一道 */
+.xm-todo[data-drop] {
+  position: relative;
+}
+.xm-todo[data-drop="before"]::before,
+.xm-todo[data-drop="after"]::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--xm-drop-line);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.28),
+    0 1px 2px rgba(74, 52, 8, 0.2);
+  pointer-events: none;
+}
+.xm-todo[data-drop="before"]::before {
+  top: -2px;
+}
+.xm-todo[data-drop="after"]::after {
+  bottom: -2px;
+}
+
+/* 键盘 Alt+↑/↓ 交换后：交换过去的那一行轻轻"落"一下，告诉用户换成了哪一行 */
+.xm-todo--moving {
+  position: relative;
+  z-index: 4;
+  animation: xm-todo-moving 140ms var(--xm-ease-out);
+}
+@keyframes xm-todo-moving {
+  from {
+    opacity: 0.65;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 拖拽手柄：12px 宽、贴整行高，六个 2px 小圆点（2 列 × 3 行）。
+   点是用背景图画的：不占行高、不参与排版，字号变大也不会把手指挤出形状。 */
+.xm-todo__grip {
+  flex: 0 0 12px;
+  align-self: stretch;
+  width: 12px;
+  min-width: 12px;
+  height: auto;
+  margin: 0 -2px 0 0;
+  color: var(--xm-ink-soft);
+  cursor: grab;
+  opacity: 0.25;
+  background-image:
+    radial-gradient(circle 1px at 3px 25%, currentColor 1px, transparent 1.4px),
+    radial-gradient(circle 1px at 3px 50%, currentColor 1px, transparent 1.4px),
+    radial-gradient(circle 1px at 3px 75%, currentColor 1px, transparent 1.4px),
+    radial-gradient(circle 1px at 9px 25%, currentColor 1px, transparent 1.4px),
+    radial-gradient(circle 1px at 9px 50%, currentColor 1px, transparent 1.4px),
+    radial-gradient(circle 1px at 9px 75%, currentColor 1px, transparent 1.4px);
+  background-repeat: no-repeat;
+  transition: opacity var(--xm-dur-quick) var(--xm-ease-out);
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+.xm-todo:hover .xm-todo__grip,
+.xm-todo:focus-within .xm-todo__grip {
+  opacity: 0.55;
+}
+.xm-todo__grip:active,
+.xm-todos[data-dragging="1"] .xm-todo__grip {
+  opacity: 0.9;
+}
+.xm-todos[data-dragging="1"] .xm-todo__grip {
+  cursor: grabbing;
+}
+
+/* ---------- 25.1 关掉动效 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .xm-quick__paper {
+    animation: none;
+  }
+  .xm-todo--moving {
+    animation: none;
+  }
+  .xm-todo[data-drag="1"] {
+    transition: none;
+  }
+  .xm-todo__grip {
+    transition: none;
+  }
+}
+
+/* ==========================================================================
+   26. 夜间纸色 [data-theme="night"]
+   --------------------------------------------------------------------------
+   原则：不是把页面"反色"，而是把整叠纸换成深褐牛皮纸——
+     · 纸面仍保留"左上亮、右下深"的斜向层次（用变量，不写死）；
+     · 墨色换成米白（tokens.css 已按 WCAG 算过，正文对纸 9.6~11.5:1）；
+     · 所有浅色硬编码表面（面板、卡片、按钮、弹层、键帽、开关、
+       版本层、回收站、随身笔记、代码块）逐个换成深色，不留白块死角。
+   纸面渐变用的是 tokens 里注册过 @property 的颜色变量，所以切主题时
+   渐变会跟着 300ms 一起"化"过去，不是啪一下变黑。
+   ========================================================================== */
+
+/* 原生控件（输入框光标、滚动条、下拉）也跟着夜间模式走 */
+:root[data-theme="night"] {
+  color-scheme: dark;
+}
+
+/* ---------- 26.1 便签纸 / 提醒纸 / 快速记录纸 ---------- */
+[data-theme="night"] .xm-note__paper,
+[data-theme="night"] .xm-reminder__paper {
+  background-image:
+    /* 顶部受光边：深纸上只留一层极淡的暖光，白 .55 会像蒙了层塑料膜 */
+    linear-gradient(180deg, rgba(255, 244, 214, 0.08) 0%, rgba(255, 244, 214, 0) 12%),
+    /* 底部内阴影：换成纯黑，纸的厚度才压得出来 */
+    linear-gradient(0deg, rgba(0, 0, 0, 0.34) 0%, rgba(0, 0, 0, 0) 16%),
+    var(--xm-tex),
+    repeating-linear-gradient(96deg, rgba(255, 238, 200, 0.02) 0 1px, rgba(255, 238, 200, 0) 1px 6px),
+    linear-gradient(
+      158deg,
+      var(--xm-paper-a) 0%,
+      var(--xm-paper-b) 32%,
+      var(--xm-paper-c) 74%,
+      var(--xm-paper-d) 100%
+    );
+  background-blend-mode: normal, normal, soft-light, normal, normal;
+}
+[data-theme="night"] .xm-quick__paper {
+  background-image:
+    linear-gradient(180deg, rgba(255, 244, 214, 0.08) 0%, rgba(255, 244, 214, 0) 14%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.3) 0%, rgba(0, 0, 0, 0) 18%),
+    var(--xm-tex),
+    repeating-linear-gradient(96deg, rgba(255, 238, 200, 0.02) 0 1px, rgba(255, 238, 200, 0) 1px 6px),
+    linear-gradient(
+      158deg,
+      var(--xm-paper-a) 0%,
+      var(--xm-paper-b) 34%,
+      var(--xm-paper-c) 76%,
+      var(--xm-paper-d) 100%
+    );
+  background-blend-mode: normal, normal, soft-light, normal, normal;
+}
+
+/* 折角：纸背在夜间比纸面浅一档，折起来的那块才看得见 */
+[data-theme="night"] .xm-note__paper::after {
+  background: linear-gradient(
+    225deg,
+    #6b5b34 0%,
+    #4c4028 38%,
+    var(--xm-paper-back) 72%,
+    var(--xm-paper-back-2) 100%
+  );
+  filter: drop-shadow(-2px -2px 3px rgba(0, 0, 0, 0.5));
+}
+[data-theme="night"] .xm-quick__paper::after {
+  background: linear-gradient(225deg, #6b5b34 0%, #4c4028 40%, var(--xm-paper-back) 78%);
+  filter: drop-shadow(-2px -2px 2px rgba(0, 0, 0, 0.45));
+}
+
+/* 置顶 / 收起态：日间那两段"白高光 + 暖影"要换成深色内环 + 黑影 */
+[data-theme="night"] .xm-note[data-pinned="1"] .xm-note__paper {
+  box-shadow:
+    inset 0 0 0 1px rgba(224, 161, 60, 0.42),
+    inset 0 1px 0 rgba(255, 245, 220, 0.12),
+    inset 1px 0 0 rgba(0, 0, 0, 0.24),
+    inset -1px 0 0 rgba(0, 0, 0, 0.3),
+    inset 0 -14px 22px -16px rgba(0, 0, 0, 0.5),
+    0 3px 4px rgba(0, 0, 0, 0.55),
+    0 16px 32px -8px rgba(0, 0, 0, 0.66);
+}
+[data-theme="night"] .xm-note[data-collapsed="1"] .xm-note__paper {
+  box-shadow:
+    inset 0 0 0 1px rgba(224, 161, 60, 0.2),
+    0 1px 2px rgba(0, 0, 0, 0.5),
+    0 10px 20px -8px rgba(0, 0, 0, 0.55);
+}
+[data-theme="night"] .xm-note[data-collapsed="1"] .xm-note__tools [data-act="expand"] {
+  background: rgba(255, 246, 220, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(224, 161, 60, 0.22);
+}
+
+/* 日间给文字加的"白描边"在深纸上会变成一层灰雾，全部换成黑描边 */
+[data-theme="night"] .xm-note__title {
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+}
+[data-theme="night"] .xm-todo__text {
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+[data-theme="night"] .xm-vault__row[data-masked="1"] .xm-vault__value,
+[data-theme="night"] .xm-vault__value[data-masked="1"] {
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+/* 正文滚动时纸边那两道 3px 暗边：日间是暖褐，夜间要纯黑才压得住 */
+[data-theme="night"] .xm-note__body::before {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.42), rgba(0, 0, 0, 0));
+}
+[data-theme="night"] .xm-note__body::after {
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.46), rgba(0, 0, 0, 0));
+}
+
+/* ---------- 26.2 待办 / toast / 按钮 ---------- */
+[data-theme="night"] .xm-todo:hover {
+  background: rgba(255, 246, 220, 0.06);
+}
+[data-theme="night"] .xm-todo__check {
+  background: linear-gradient(150deg, rgba(255, 246, 220, 0.14), rgba(255, 246, 220, 0.04));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 245, 220, 0.12),
+    0 1px 1px rgba(0, 0, 0, 0.35);
+}
+[data-theme="night"] .xm-todo__del:hover {
+  background: rgba(226, 146, 128, 0.18);
+}
+
+[data-theme="night"] .xm-toast {
+  background: linear-gradient(152deg, rgba(59, 52, 36, 0.98), rgba(46, 41, 28, 0.97));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 239, 205, 0.16),
+    inset 0 1px 0 rgba(255, 245, 220, 0.1),
+    0 3px 8px rgba(0, 0, 0, 0.45),
+    0 12px 24px -6px rgba(0, 0, 0, 0.55);
+}
+[data-theme="night"] .xm-btn {
+  border-color: rgba(255, 239, 205, 0.2);
+  background: linear-gradient(155deg, rgba(255, 246, 220, 0.12), rgba(255, 246, 220, 0.05));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 245, 220, 0.14),
+    0 1px 2px rgba(0, 0, 0, 0.32);
+  color: var(--xm-ink);
+}
+[data-theme="night"] .xm-btn:hover {
+  background: linear-gradient(155deg, rgba(255, 246, 220, 0.18), rgba(255, 246, 220, 0.08));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 245, 220, 0.16),
+    0 2px 4px rgba(0, 0, 0, 0.4);
+}
+[data-theme="night"] .xm-btn--icon:hover,
+[data-theme="night"] .xm-btn--ghost:hover {
+  background: rgba(255, 246, 220, 0.1);
+}
+[data-theme="night"] .xm-btn--primary {
+  border-color: rgba(255, 220, 160, 0.3);
+  background: linear-gradient(160deg, #f0ad35, #d1830f);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 235, 180, 0.5),
+    0 1px 2px rgba(0, 0, 0, 0.35);
+  color: #3f2a06;
+}
+
+/* ---------- 26.3 便签内弹层 / 表单 / 分段控件 ---------- */
+[data-theme="night"] .xm-pop {
+  background: linear-gradient(160deg, rgba(59, 52, 36, 0.98), rgba(46, 41, 28, 0.97));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 239, 205, 0.16),
+    inset 0 1px 0 rgba(255, 245, 220, 0.1),
+    0 4px 10px rgba(0, 0, 0, 0.5),
+    0 16px 30px -8px rgba(0, 0, 0, 0.6);
+  scrollbar-color: rgba(240, 225, 195, 0.26) transparent;
+}
+[data-theme="night"] .xm-pop::-webkit-scrollbar-thumb {
+  background: rgba(240, 225, 195, 0.26);
+}
+[data-theme="night"] .xm-pop__item:hover {
+  background: rgba(255, 246, 220, 0.1);
+}
+[data-theme="night"] .xm-pop__item[data-confirm="1"] {
+  background: rgba(226, 146, 128, 0.22);
+  color: #ffd9d0;
+}
+
+[data-theme="night"] .xm-field {
+  border-color: rgba(255, 239, 205, 0.18);
+  background: rgba(255, 246, 220, 0.08);
+  color-scheme: dark;
+}
+[data-theme="night"] .xm-field:focus {
+  background: rgba(255, 246, 220, 0.14);
+}
+
+[data-theme="night"] .xm-seg {
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(255, 239, 205, 0.12);
+}
+[data-theme="night"] .xm-seg__item::before {
+  background: linear-gradient(160deg, #4a422b, #3d3724);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(255, 239, 205, 0.16);
+}
+
+[data-theme="night"] .xm-repeat__opt {
+  border-color: rgba(255, 239, 205, 0.18);
+  background: linear-gradient(160deg, rgba(255, 246, 220, 0.09), rgba(255, 246, 220, 0.03));
+  color: var(--xm-ink-soft);
+}
+[data-theme="night"] .xm-repeat__opt:hover {
+  background: rgba(255, 246, 220, 0.13);
+  color: var(--xm-ink);
+}
+[data-theme="night"] .xm-repeat__opt[data-active="1"] {
+  background: linear-gradient(160deg, #6a5526, #55431c);
+  box-shadow:
+    inset 0 0 0 1px rgba(224, 161, 60, 0.4),
+    0 1px 2px rgba(0, 0, 0, 0.35);
+  color: #ffe9b0;
+}
+
+/* ---------- 26.4 面板 / 设置页 / 卡片 ---------- */
+/* 内页渐变继续用 --xm-sheet-a/b/c：tokens 里已注册成 <color>，
+   切主题时这三个变量会在 300ms 里从米白插值到深褐，面板不会"啪"一下变黑。 */
+[data-theme="night"] .xm-panel {
+  background-color: var(--xm-sheet-a);
+  background-image:
+    linear-gradient(180deg, rgba(255, 244, 214, 0.08) 0%, rgba(255, 244, 214, 0) 14%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.3) 0%, rgba(0, 0, 0, 0) 16%),
+    var(--xm-tex),
+    repeating-linear-gradient(96deg, rgba(255, 238, 200, 0.022) 0 1px, rgba(255, 238, 200, 0) 1px 7px),
+    linear-gradient(165deg, var(--xm-sheet-a) 0%, var(--xm-sheet-b) 52%, var(--xm-sheet-c) 100%);
+  background-blend-mode: normal, normal, soft-light, normal, normal;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 239, 205, 0.14),
+    inset 0 1px 0 rgba(255, 245, 220, 0.1),
+    0 12px 32px -8px rgba(0, 0, 0, 0.66);
+}
+[data-theme="night"] .xm-settings {
+  background-color: var(--xm-sheet-a);
+  background-image:
+    linear-gradient(180deg, rgba(255, 244, 214, 0.08) 0%, rgba(255, 244, 214, 0) 10%),
+    var(--xm-tex),
+    linear-gradient(168deg, var(--xm-sheet-a) 0%, var(--xm-sheet-b) 58%, var(--xm-sheet-c) 100%);
+  background-blend-mode: normal, soft-light, normal;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 239, 205, 0.14),
+    inset 0 1px 0 rgba(255, 245, 220, 0.1),
+    0 12px 32px -8px rgba(0, 0, 0, 0.66);
+}
+[data-theme="night"] .xm-search {
+  background: rgba(255, 246, 220, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 239, 205, 0.16);
+}
+[data-theme="night"] .xm-search:focus {
+  background: rgba(255, 246, 220, 0.14);
+}
+
+[data-theme="night"] .xm-card {
+  background: linear-gradient(160deg, rgba(255, 246, 220, 0.1), rgba(255, 246, 220, 0.05));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 239, 205, 0.14),
+    inset 0 1px 0 rgba(255, 245, 220, 0.1),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 6px 12px -4px rgba(0, 0, 0, 0.45);
+}
+[data-theme="night"] .xm-card:hover {
+  background: linear-gradient(160deg, rgba(255, 246, 220, 0.14), rgba(255, 246, 220, 0.07));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 239, 205, 0.2),
+    inset 0 1px 0 rgba(255, 245, 220, 0.12),
+    0 3px 6px rgba(0, 0, 0, 0.4),
+    0 10px 20px -6px rgba(0, 0, 0, 0.5);
+}
+[data-theme="night"] .xm-card[data-selected="1"] {
+  background: linear-gradient(160deg, rgba(255, 236, 190, 0.17), rgba(255, 236, 190, 0.09));
+  box-shadow:
+    0 0 0 2px rgba(224, 161, 60, 0.7),
+    inset 0 0 0 1px rgba(240, 190, 120, 0.32),
+    inset 0 1px 0 rgba(255, 245, 220, 0.12),
+    0 3px 8px rgba(0, 0, 0, 0.45),
+    0 10px 20px -6px rgba(0, 0, 0, 0.55);
+}
+
+/* ---------- 26.5 回收站 ---------- */
+[data-theme="night"] .xm-trash__row:hover {
+  background: rgba(255, 246, 220, 0.06);
+}
+[data-theme="night"] .xm-trash__row[data-selected="1"] {
+  background: rgba(255, 246, 220, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(224, 161, 60, 0.4);
+}
+
+/* ---------- 26.6 设置页开关 / 键帽 ---------- */
+[data-theme="night"] .xm-switch {
+  background: linear-gradient(160deg, #4a4330, #3a3424);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.6),
+    inset 0 0 0 1px rgba(255, 239, 205, 0.16);
+}
+[data-theme="night"] .xm-switch::after {
+  background: radial-gradient(circle at 34% 28%, #6b6250, #524b39 62%, #423c2c 100%);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.55),
+    0 1px 1px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(255, 245, 220, 0.18);
+}
+[data-theme="night"] .xm-switch[aria-checked="1"] {
+  background: linear-gradient(160deg, #c98a24, #a56a0c);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(255, 220, 160, 0.3),
+    0 0 10px rgba(224, 161, 60, 0.28);
+}
+[data-theme="night"] .xm-kbd {
+  background: linear-gradient(160deg, #4a4330, #3b3626);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 245, 220, 0.16),
+    0 1.5px 0 rgba(0, 0, 0, 0.5);
+  color: var(--xm-ink-meta);
+}
+[data-theme="night"] .xm-kbd--edit:hover {
+  color: var(--xm-ink);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 245, 220, 0.2),
+    0 1.5px 0 rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(224, 161, 60, 0.4);
+}
+
+/* ---------- 26.7 纸窗封皮 / 标题条 / 内页 ---------- */
+[data-theme="night"] .xm-chrome {
+  background-image:
+    linear-gradient(180deg, rgba(255, 244, 214, 0.1) 0%, rgba(255, 244, 214, 0) 18%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.3) 0%, rgba(0, 0, 0, 0) 20%),
+    linear-gradient(
+      166deg,
+      var(--xm-chrome-shell-a) 0%,
+      var(--xm-chrome-shell-b) 52%,
+      var(--xm-chrome-shell-c) 100%
+    );
+}
+[data-theme="night"] .xm-chrome__head {
+  background: linear-gradient(180deg, rgba(255, 244, 214, 0.14), rgba(255, 244, 214, 0) 78%);
+  box-shadow:
+    inset 0 1px 0 var(--xm-chrome-crease-hi),
+    0 1px 0 var(--xm-chrome-crease),
+    0 2px 0 var(--xm-chrome-crease-hi),
+    inset 0 -7px 9px -9px rgba(0, 0, 0, 0.55);
+}
+[data-theme="night"] .xm-chrome__title {
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+}
+[data-theme="night"] .xm-chrome__body {
+  background-image:
+    linear-gradient(180deg, rgba(255, 244, 214, 0.1) 0%, rgba(255, 244, 214, 0) 10%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.26) 0%, rgba(0, 0, 0, 0) 12%),
+    linear-gradient(
+      172deg,
+      var(--xm-chrome-face-a) 0%,
+      var(--xm-chrome-face-b) 58%,
+      var(--xm-chrome-face-c) 100%
+    );
+}
+
+/* ---------- 26.8 版本详情层 ---------- */
+[data-theme="night"] .xm-version__paper {
+  background-color: var(--xm-sheet-a);
+  background-image:
+    linear-gradient(180deg, rgba(255, 244, 214, 0.08) 0%, rgba(255, 244, 214, 0) 16%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.26) 0%, rgba(0, 0, 0, 0) 12%),
+    var(--xm-tex),
+    repeating-linear-gradient(96deg, rgba(255, 238, 200, 0.022) 0 1px, rgba(255, 238, 200, 0) 1px 7px),
+    linear-gradient(165deg, var(--xm-sheet-a) 0%, var(--xm-sheet-b) 58%, var(--xm-sheet-c) 100%);
+  background-blend-mode: normal, normal, soft-light, normal, normal;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 239, 205, 0.14),
+    inset 0 1px 0 rgba(255, 245, 220, 0.1),
+    0 2px 6px rgba(0, 0, 0, 0.35),
+    0 12px 26px -12px rgba(0, 0, 0, 0.6);
+}
+[data-theme="night"] .xm-version__head {
+  border-bottom-color: rgba(255, 239, 205, 0.12);
+  box-shadow: 0 1px 0 rgba(255, 245, 220, 0.06);
+}
+[data-theme="night"] .xm-version__foot {
+  border-top-color: rgba(255, 239, 205, 0.1);
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0));
+}
+[data-theme="night"] .xm-version__todo-check {
+  background: rgba(255, 246, 220, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 239, 205, 0.24);
+}
+[data-theme="night"] .xm-version__todo-check::after {
+  border-color: #f2c87c;
+}
+[data-theme="night"] .xm-version__todo[data-done="1"] .xm-version__todo-check {
+  background: linear-gradient(160deg, #7a6226, #5c4a1a);
+}
+
+/* ---------- 26.9 随身笔记 / 差异视图 ---------- */
+[data-theme="night"] .xm-vault__row:hover {
+  background: rgba(255, 246, 220, 0.06);
+}
+[data-theme="night"] .xm-vault__row + .xm-vault__row {
+  border-top-color: rgba(240, 225, 195, 0.14);
+}
+[data-theme="night"] .xm-vault__row[data-copied="1"]::after {
+  background: rgba(58, 50, 30, 0.9);
+  color: #ffe3a8;
+}
+[data-theme="night"] .xm-vault__row[data-editing="1"] {
+  background: rgba(255, 246, 220, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(224, 161, 60, 0.32);
+}
+[data-theme="night"] .xm-vault__input {
+  background: rgba(255, 246, 220, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 239, 205, 0.18);
+}
+[data-theme="night"] .xm-vault__input:focus {
+  background: rgba(255, 246, 220, 0.14);
+  box-shadow:
+    inset 0 0 0 1px rgba(224, 161, 60, 0.5),
+    0 0 0 2px rgba(224, 161, 60, 0.16);
+}
+[data-theme="night"] .xm-vault__add {
+  border-color: rgba(240, 225, 195, 0.28);
+  background: rgba(255, 246, 220, 0.05);
+}
+[data-theme="night"] .xm-vault__add:hover {
+  border-color: rgba(224, 161, 60, 0.6);
+  background: rgba(255, 246, 220, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 245, 220, 0.08);
+}
+[data-theme="night"] .xm-vault__add:active {
+  background: rgba(255, 246, 220, 0.07);
+}
+[data-theme="night"] .xm-vault__all {
+  box-shadow: inset 0 0 0 1px rgba(255, 239, 205, 0.14);
+}
+[data-theme="night"] .xm-vault__all:hover {
+  background: rgba(255, 246, 220, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(224, 161, 60, 0.3);
+}
+
+[data-theme="night"] .xm-diff__item--add {
+  background: var(--xm-diff-add-bg);
+  box-shadow: inset 2px 0 0 var(--xm-diff-add-line);
+}
+[data-theme="night"] .xm-diff__item--del {
+  background: var(--xm-diff-del-bg);
+  box-shadow: inset 2px 0 0 var(--xm-diff-del-line);
+}
+[data-theme="night"] .xm-diff__item--same {
+  border-bottom-color: rgba(240, 225, 195, 0.14);
+}
+[data-theme="night"] .xm-diff__swatch--add {
+  background: rgba(100, 165, 115, 0.32);
+  box-shadow: inset 0 0 0 1px var(--xm-diff-add-line);
+}
+[data-theme="night"] .xm-diff__swatch--del {
+  background: rgba(215, 105, 92, 0.28);
+  box-shadow: inset 0 0 0 1px var(--xm-diff-del-line);
+}
+
+/* ---------- 26.10 Markdown / 搜索命中 ---------- */
+[data-theme="night"] mark.xm-hit {
+  background: rgba(224, 161, 60, 0.3);
+  box-shadow: 0 0 0 1px rgba(224, 161, 60, 0.16);
+}
+[data-theme="night"] .xm-md-code {
+  background: rgba(255, 246, 220, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 239, 205, 0.14);
+}
+[data-theme="night"] .xm-text[data-md="1"] em {
+  background: rgba(224, 161, 60, 0.16);
+}
+[data-theme="night"] .xm-text[data-md="1"] del {
+  text-decoration-color: rgba(241, 230, 204, 0.5);
+}
+[data-theme="night"] .xm-text[data-md="1"] > .xm-md-p:hover {
+  background: rgba(255, 246, 220, 0.06);
+  box-shadow: 0 0 0 2px rgba(255, 246, 220, 0.06);
+}
+
+/* ---------- 26.11 筛选胶囊的夜间态 ---------- */
+/* 日间的 active 是米白→浅琥珀渐变，夜里会变成一块亮白贴纸，文字又是近白色，
+   直接看不见。夜里改成"深底上的琥珀小纸片"。 */
+[data-theme="night"] .xm-chip {
+  background: rgba(255, 246, 220, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 239, 205, 0.14);
+  color: var(--xm-ink-soft);
+}
+[data-theme="night"] .xm-chip:hover {
+  background: rgba(255, 246, 220, 0.12);
+  color: var(--xm-ink);
+}
+[data-theme="night"] .xm-chip[data-active="1"] {
+  color: var(--xm-ink-strong);
+  background: linear-gradient(160deg, rgba(224, 161, 60, 0.42), rgba(224, 161, 60, 0.24));
+  box-shadow:
+    inset 0 0 0 1px rgba(240, 190, 120, 0.42),
+    0 1px 2px rgba(0, 0, 0, 0.45);
+}
+[data-theme="night"] .xm-chip__badge {
+  background: rgba(224, 161, 60, 0.36);
+  color: #ffe9b8;
+}
+[data-theme="night"] .xm-chip[data-due="overdue"] .xm-chip__badge {
+  background: rgba(226, 146, 128, 0.26);
+  color: #ffd7cc;
+}
+[data-theme="night"] .xm-filters__clear {
+  color: var(--xm-ink-soft);
+}
+
+/* 拖拽中被拿起的那一行：日间是半透明白纸，夜里会亮成一格格灯 */
+[data-theme="night"] .xm-todo[data-drag="1"] {
+  background: rgba(255, 246, 220, 0.12);
+  box-shadow:
+    0 6px 16px -6px rgba(0, 0, 0, 0.7),
+    inset 0 0 0 1px rgba(224, 161, 60, 0.45);
+}
+
+/* ---------- 26.12 尊重"减少动效"：纸色直接切，不做 300ms 渐变 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    transition-duration: 0.01ms;
+  }
+}
+
+/* ==========================================================================
+   27. 历史兼容别名（当前 DOM 已不用，下一版删除）
+   --------------------------------------------------------------------------
+   这三组旧类名是前端早期迭代留下的：
+   - .xm-trash__item：回收站行现在用 .xm-trash__row；
+   - .xm-card__vault-label：卡片预览现在用 <b>；
+   - .xm-version__vault-label：版本层预览现在用 <b>。
+   生产 DOM 已不再生成它们（grep src 目录零引用）。为了不破坏可能的外部
+   快照/旧样式，这里集中保留一份等价声明，不再散落在正常规则里。
+   下一版（DOM 清理完成后）整节删除。
+   ========================================================================== */
+.xm-trash__item {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title restore"
+    "preview restore"
+    "meta restore";
+  column-gap: 8px;
+  row-gap: 1px;
+  box-sizing: border-box;
+  padding: 8px 8px 7px 10px;
+  border-bottom: 1px dashed var(--xm-line-soft);
+  border-radius: 6px;
+  transition: background-color var(--xm-dur-quick) var(--xm-ease-out);
+}
+.xm-trash__item:last-child {
+  border-bottom: 0;
+}
+.xm-trash__item:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+.xm-trash__item[data-selected="1"] {
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow: inset 0 0 0 1px rgba(196, 146, 36, 0.28);
+}
+.xm-trash__item:focus-visible {
+  outline: 2px solid var(--xm-accent);
+  outline-offset: -2px;
+}
+.xm-trash__item .xm-btn {
+  grid-area: restore;
+  align-self: center;
+  padding: 3px 10px;
+  font-size: 11px;
+  line-height: 15px;
+}
+.xm-card__vault-row .xm-card__vault-label {
+  font-weight: 600;
+  color: var(--xm-ink-strong, var(--xm-ink));
+}
+.xm-version__vault-label {
+  flex: 0 0 auto;
+  max-width: 44%;
+  font-weight: 600;
+  color: var(--xm-ink-strong, var(--xm-ink));
+}
+
+
