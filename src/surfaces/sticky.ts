@@ -21,6 +21,7 @@ import { repeatLabel } from "../shared/format";
 import { clearUndo, publishUndo } from "../shared/undo";
 import { copyText } from "../shared/clipboard";
 import { hasVaultContent, maskSecret, vaultAllText } from "../shared/vault";
+import { createSizeFeel } from "../shared/size-feel";
 import type { Note, Settings, TodoItem, VaultItem } from "../shared/types";
 
 /** 6 种纸色，顺序与设置页一致 */
@@ -76,7 +77,6 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
   let sizeRequest = 0;
   let windowChanges: Promise<void> = Promise.resolve();
   let pendingWindowChanges = 0;
-  let resizeFadeTimer = 0;
 
   /** 折叠和尺寸共用队列，让后端收到的顺序与点击顺序一致。 */
   function queueWindowChange<T>(change: () => Promise<T>): Promise<T> {
@@ -212,20 +212,8 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
   // ---------- 3. 常用节点 ----------
   const noteEl = query<HTMLElement>(root, ".xm-note");
 
-  /** 尺寸切换只淡入，不缩放；连点共用一个清理定时器。 */
-  function markResizing(): void {
-    noteEl.dataset.resizing = "";
-    if (resizeFadeTimer) window.clearTimeout(resizeFadeTimer);
-    resizeFadeTimer = window.setTimeout(() => {
-      delete noteEl.dataset.resizing;
-      // 移除覆盖规则会重建默认入场动画；直接收至终点，避免再“落纸”一次。
-      for (const animation of paperEl.getAnimations()) {
-        if (animation instanceof CSSAnimation && animation.animationName === "xm-note-in") animation.finish();
-      }
-      resizeFadeTimer = 0;
-    }, 100);
-  }
   const paperEl = query<HTMLElement>(root, ".xm-note__paper");
+  const sizeFeel = createSizeFeel(noteEl, paperEl);
   const dragEl = query<HTMLElement>(root, ".xm-note__drag");
   const titleInput = query<HTMLInputElement>(root, ".xm-note__title");
   const panelBtn = query<HTMLButtonElement>(root, '[data-act="panel"]');
@@ -1052,8 +1040,10 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     try {
       const saved = await queueWindowChange(() => {
         if (request !== collapseRequest) return Promise.resolve(null);
-        markResizing();
-        return api.setNoteCollapsed(draft.id, next);
+        return sizeFeel.run(() => api.setNoteCollapsed(draft.id, next), {
+          width: draft.width ?? innerWidth,
+          height: next ? 64 : draft.height ?? 380,
+        });
       });
       if (!saved || request !== collapseRequest) return;
       // 只同步后端算出来的字段，别把草稿里还没保存的改动覆盖掉
@@ -1768,6 +1758,7 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     }
     const sizeItem = target.closest<HTMLElement>(".xm-seg__item[data-size]");
     if (sizeItem?.dataset.size) {
+      sizeFeel.press(sizeItem);
       const preset = SIZE_PRESETS.find((p) => p.key === sizeItem.dataset.size);
       if (preset) {
         const request = ++sizeRequest;
@@ -1777,8 +1768,7 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
         // 队列中已被后续点击取代的目标不再调用后端；运行中的提交由后端合并最新目标。
         void queueWindowChange(() => {
           if (request !== sizeRequest) return Promise.resolve(null);
-          markResizing();
-          return api.setNoteSize(draft.id, preset.width, preset.height);
+          return sizeFeel.run(() => api.setNoteSize(draft.id, preset.width, preset.height), preset);
         })
           .then((saved) => {
             if (!saved || request !== sizeRequest) return;

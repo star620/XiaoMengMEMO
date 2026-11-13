@@ -390,6 +390,14 @@ fn force_repaint(window: &WebviewWindow) {
 /// 省那点电不值得，直接关掉这个特性。
 const WEBVIEW_ARGS: &str = "--disable-features=CalculateNativeWinOcclusion";
 
+fn size_feel_mode(value: Option<&str>) -> &'static str {
+    match value {
+        Some("fade") => "fade",
+        Some("veil") => "veil",
+        _ => "snap",
+    }
+}
+
 // ---------- 尺寸切换 ----------
 //
 // 同步 SetWindowPos 本身可能耗时几十毫秒，不再尝试逐帧变形。
@@ -800,6 +808,13 @@ pub fn open_note_window(
     ));
     let url = format!("index.html?surface=sticky&id={}", encode(&note.id));
     let builder = WebviewWindowBuilder::new(app, label.as_str(), WebviewUrl::App(url.into()))
+        .initialization_script(format!(
+            "Object.defineProperty(window,'__XM_SIZE_FEEL__',{{value:{}}});",
+            serde_json::to_string(size_feel_mode(
+                std::env::var("XM_SIZE_FEEL").ok().as_deref()
+            ))
+            .expect("模式可序列化")
+        ))
         .title(note.window_title())
         .inner_size(width, height)
         .min_inner_size(MIN_WIDTH, MIN_NOTE_HEIGHT)
@@ -1448,6 +1463,15 @@ fn snap_one(app: &AppHandle, label: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 尺寸观感默认纯瞬切且只接受指定变体() {
+        assert_eq!(size_feel_mode(None), "snap");
+        assert_eq!(size_feel_mode(Some("snap")), "snap");
+        assert_eq!(size_feel_mode(Some("fade")), "fade");
+        assert_eq!(size_feel_mode(Some("veil")), "veil");
+        assert_eq!(size_feel_mode(Some("unknown")), "snap");
+    }
 
     fn primary() -> Rect {
         Rect {
