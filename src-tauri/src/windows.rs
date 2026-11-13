@@ -32,6 +32,9 @@ pub const SETTINGS_LABEL: &str = "settings";
 pub const REMINDER_LABEL: &str = "reminder";
 /// 快速记录浮层窗口标签
 pub const QUICK_LABEL: &str = "quick";
+/// 管理面板默认大小：用户主动打开与启动驻留任务栏共用同一套尺寸，避免两处写不一致
+pub const PANEL_WIDTH: f64 = 420.0;
+pub const PANEL_HEIGHT: f64 = 620.0;
 
 pub fn note_label(id: &str) -> String {
     format!("{NOTE_PREFIX}{id}")
@@ -313,6 +316,8 @@ fn raise_to_front(window: &WebviewWindow, keep_on_top: bool) {
         "raise {}: before(vis,min,focus)={before:?} after={after:?} keep_on_top={keep_on_top}",
         window.label()
     ));
+    // 第一次 set_focus 可能因为标志位/前台锁被跳过，稍后再补一次并打点
+    focus_after_restore(window);
     if !keep_on_top {
         // 置顶只借一会儿：等窗口真正排到最前、用户看见之后再放回普通层。
         // 立刻还原的话，Windows 有时会把 z 序重排回原来的位置，看起来就是"点了没反应"。
@@ -348,6 +353,45 @@ fn focus_window(window: &WebviewWindow) {
     if let Err(err) = window.set_focus() {
         log_line(format!("聚焦窗口 {} 失败：{err}", window.label()));
     }
+}
+
+/// 恢复窗口后再补一次聚焦与状态打点。
+///
+/// show()/unminimize()/set_focus() 都是「把操作排进主线程队列」就返回（tao 的 set_focus
+/// 还要先读 VISIBLE/MINIMIZED 标志位再决定要不要 SetForegroundWindow）。从后台线程连续
+/// 调用时，标志位可能还没刷新，第一次 set_focus() 会被静静跳过；Windows 的前台锁也会吞掉
+/// 一部分聚焦请求。等主线程把恢复操作处理完再补一次，顺手把最终状态写进启动日志
+/// （用户看不到任务栏，排查时只能靠日志判断「窗口到底恢复没有」）。
+fn focus_after_restore(window: &WebviewWindow) {
+    let window = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(120));
+        if !window.is_visible().unwrap_or(false) {
+            crate::boot_log(&format!(
+                "focus_after_restore {}: 窗口已隐藏，跳过",
+                window.label()
+            ));
+            return;
+        }
+        // 用户在 120ms 内又把它最小化了：尊重用户，不要再拽出来
+        if window.is_minimized().unwrap_or(false) {
+            crate::boot_log(&format!(
+                "focus_after_restore {}: 仍是最小化，跳过",
+                window.label()
+            ));
+            return;
+        }
+        if !window.is_focused().unwrap_or(false) {
+            focus_window(&window);
+        }
+        crate::boot_log(&format!(
+            "focus_after_restore {}: visible={:?} minimized={:?} focused={:?}",
+            window.label(),
+            window.is_visible().unwrap_or(false),
+            window.is_minimized().unwrap_or(false),
+            window.is_focused().unwrap_or(false)
+        ));
+    });
 }
 
 /// 销毁窗口；失败只记日志（窗口可能已经自己关掉了）
@@ -957,34 +1001,21 @@ pub fn hide_all_notes(app: &AppHandle) {
     }
 }
 
-/// 面板 / 设置：单例无边框透明纸窗，已存在就显示并聚焦
-/// （圆角、纸边和关闭/最小化按钮由前端自绘；拖动区由前端补 data-tauri-drag-region）
-fn open_aux(
+/// 面板 / 设置窗口的统一创建逻辑（不显示、不聚焦，交给调用方处理）。
+///
+/// open_aux（用户主动打开）和 ensure_panel_resident（启动常驻任务栏）共用这一份，
+/// 避免两处各写一遍窗口参数、以后改一处漏一处。
+fn build_aux(
     app: &AppHandle,
     label: &str,
     title: &str,
     width: f64,
     height: f64,
+    focused: bool,
 ) -> Result<WebviewWindow, String> {
-    if let Some(window) = app.get_webview_window(label) {
-        // 最小化过的窗口只 show() 是回不来的（HWND 仍 iconic），必须 unminimize 再显示；
-        // 再 raise 一次，避免它只是"显示"了却还压在别的窗口后面
-        crate::boot_log(&format!(
-            "open_aux {label}: exists vis={:?} min={:?} pos={:?}",
-            window.is_visible().unwrap_or(false),
-            window.is_minimized().unwrap_or(false),
-            window.outer_position().ok()
-        ));
-        restore_and_focus(&window);
-        raise_to_front(&window, false);
-        // 面板每次被叫出来都回到列表（离开时可能停在"修改记录/回收站"里）
-        if label == PANEL_LABEL {
-            let _ = window.eval("window.dispatchEvent(new Event('xm-panel-open'))");
-        }
-        force_repaint(&window);
-        return Ok(window);
-    }
-    crate::boot_log(&format!("open_aux {label}: creating new window"));
+    crate::boot_log(&format!(
+        "build_aux {label}: creating new window focused={focused}"
+    ));
     let url = format!("index.html?surface={}", encode(label));
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
         .title(title)
@@ -1001,10 +1032,43 @@ fn open_aux(
         .resizable(false)
         .center()
         .visible(false)
-        .focused(true)
+        .focused(focused)
         .additional_browser_args(WEBVIEW_ARGS)
         .build()
         .map_err(|err| format!("创建窗口失败：{err}"))?;
+    crate::boot_log(&format!("build_aux {label}: built"));
+    Ok(window)
+}
+
+/// 面板 / 设置：单例无边框透明纸窗，已存在就显示并聚焦
+/// （圆角、纸边和关闭/最小化按钮由前端自绘；拖动区由前端补 data-tauri-drag-region）
+fn open_aux(
+    app: &AppHandle,
+    label: &str,
+    title: &str,
+    width: f64,
+    height: f64,
+) -> Result<WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window(label) {
+        // 最小化过的窗口只 show() 是回不来的（HWND 仍 iconic），必须 unminimize 再显示；
+        // 再 raise 一次，避免它只是"显示"了却还压在别的窗口后面。
+        // raise 之后 focus_after_restore 还会补一次延迟聚焦，覆盖「标志位还没刷新 / 前台锁吞掉」的情况。
+        crate::boot_log(&format!(
+            "open_aux {label}: exists vis={:?} min={:?} pos={:?}",
+            window.is_visible().unwrap_or(false),
+            window.is_minimized().unwrap_or(false),
+            window.outer_position().ok()
+        ));
+        restore_and_focus(&window);
+        raise_to_front(&window, false);
+        // 面板每次被叫出来都回到列表（离开时可能停在"修改记录/回收站"里）
+        if label == PANEL_LABEL {
+            let _ = window.eval("window.dispatchEvent(new Event('xm-panel-open'))");
+        }
+        force_repaint(&window);
+        return Ok(window);
+    }
+    let window = build_aux(app, label, title, width, height, true)?;
     window
         .show()
         .map_err(|err| format!("显示窗口失败：{err}"))?;
@@ -1019,7 +1083,92 @@ fn open_aux(
 
 /// 打开管理面板
 pub fn open_panel(app: &AppHandle) -> Result<WebviewWindow, String> {
-    open_aux(app, PANEL_LABEL, "小梦备忘录", 420.0, 620.0)
+    open_aux(app, PANEL_LABEL, "小梦备忘录", PANEL_WIDTH, PANEL_HEIGHT)
+}
+
+/// 启动时把管理面板变成「任务栏常驻」：确保窗口存在，show() 后立刻 minimize()。
+///
+/// 只让任务栏出现「小梦备忘录」按钮，不抢焦点、不弹到桌面上；之后从任务栏按钮、
+/// 托盘、快捷键或单实例唤起都只是把同一个窗口 restore 出来，页面内容不丢。
+/// 首启流程已经 open_panel 过：这里必须复用单例，不能再建第二个（同名 label 会直接失败）。
+/// 失败只返回 Err 由调用方写 boot_log，不 panic、不影响应用启动。
+pub fn ensure_panel_resident(app: &AppHandle) -> Result<WebviewWindow, String> {
+    // created=true 才是「这里新建出来、只为了任务栏按钮」的窗口。
+    // 已存在的情况只有两种：首启欢迎流程刚 open_panel 过，或列表为空时 setup 主动打开了面板
+    // ——那都是刻意让人看的，不能再把它按下去，否则用户会觉得「启动后面板一闪就没了」。
+    let (window, created) = match app.get_webview_window(PANEL_LABEL) {
+        Some(window) => {
+            crate::boot_log(&format!(
+                "panel_resident: reuse vis={:?} min={:?}（已由启动流程打开，保持原样）",
+                window.is_visible().unwrap_or(false),
+                window.is_minimized().unwrap_or(false)
+            ));
+            (window, false)
+        }
+        None => (
+            build_aux(
+                app,
+                PANEL_LABEL,
+                "小梦备忘录",
+                PANEL_WIDTH,
+                PANEL_HEIGHT,
+                false,
+            )?,
+            true,
+        ),
+    };
+    // 创建时 visible(false)：不 show() 窗口就没有任务栏按钮；show() 之后紧接着 minimize()，
+    // 按钮留下、桌面不弹窗、也不抢焦点。show 和 minimize 都只是排进主线程事件队列，
+    // 顺序执行的结果是「先出现、立刻最小化」，用户看不到闪一下的窗口。
+    if created {
+        show_window(&window);
+        if let Err(err) = window.minimize() {
+            log_line(format!("面板驻留任务栏失败（最小化）：{err}"));
+        }
+    }
+    crate::boot_log(&format!(
+        "panel_resident: ready created={created} vis={:?} min={:?} focus={:?}",
+        window.is_visible().unwrap_or(false),
+        window.is_minimized().unwrap_or(false),
+        window.is_focused().unwrap_or(false)
+    ));
+    // 从后台线程调用时 show/minimize 只是排进主线程队列，上面的读数是旧的；
+    // 等主线程处理完再打一条「落定」日志，作为启动后任务栏驻留证据。
+    let settled = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        crate::boot_log(&format!(
+            "panel_resident: settled vis={:?} min={:?} focus={:?}",
+            settled.is_visible().unwrap_or(false),
+            settled.is_minimized().unwrap_or(false),
+            settled.is_focused().unwrap_or(false)
+        ));
+    });
+    Ok(window)
+}
+
+/// 面板的关闭请求（点任务栏右键关闭 / Alt+F4 / 前端调 window.close）：
+/// prevent_close 之后只最小化，不隐藏、不销毁——窗口留在任务栏，页面（WebView2）原地保留。
+/// 设置/提醒等其它窗口仍是原来的 hide 行为。
+pub fn minimize_panel_to_taskbar(window: &Window) {
+    let before = (
+        window.is_visible().unwrap_or(false),
+        window.is_minimized().unwrap_or(false),
+    );
+    if let Err(err) = window.minimize() {
+        log_line(format!("面板最小化到任务栏失败：{err}"));
+        // 最小化失败也不能变成「点了 X 窗口没了」：至少保证窗口还显示着（任务栏按钮还在）
+        if !window.is_visible().unwrap_or(false) {
+            if let Err(err) = window.show() {
+                log_line(format!("面板重新显示失败：{err}"));
+            }
+        }
+    }
+    crate::boot_log(&format!(
+        "panel_close: minimize_to_taskbar before(vis,min)={before:?} after(vis,min)=({:?}, {:?})",
+        window.is_visible().unwrap_or(false),
+        window.is_minimized().unwrap_or(false)
+    ));
 }
 
 /// 打开设置

@@ -101,9 +101,15 @@ export function mountChrome(root: HTMLElement, options: ChromeOptions): HTMLElem
         const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         await new Promise<void>((resolve) => window.setTimeout(resolve, reduceMotion ? 0 : 150));
       }
-      // 提醒窗是真关（后端是单例，下次会重建）；面板/设置是藏起来，下次打开更快
+      // 提醒窗是真关（后端是单例，下次会重建）；
+      // 面板常驻任务栏（task-48）：点关闭只最小化，热键和提醒都还在后台跑；
+      // 设置窗仍按旧行为藏起来，下次打开更快。
       if (surface === "reminder") await closeCurrent();
+      else if (surface === "panel") await minimizeCurrent();
       else await hideCurrent();
+      // 窗口不重载页面：收窗动画标志和禁用状态必须收回，否则下次出现时整窗点不动
+      if (chromeEl) delete chromeEl.dataset.closing;
+      button.removeAttribute("disabled");
     })();
   });
 

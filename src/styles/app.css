@@ -367,3 +367,151 @@ textarea,
   height: 14px;
   opacity: 0.8;
 }
+
+/* ==========================================================================
+   8. 多选 / 批量操作（task-48）
+   工具栏「多选」进入；卡片左侧留出勾选圆点，列表与脚注之间出现批量操作条。
+   显隐全部由 JS 写的数据属性驱动（列表 .xm-panel__list[data-multi]、
+   卡片 .xm-card[data-pick]），这里只画状态，不藏逻辑。
+   ========================================================================== */
+/* [hidden] 兜底：paper.css 里 .xm-filters[data-on="0"] .xm-filters__clear 是
+   "淡显但不隐藏"，.xm-pop__item 又是 display:block，不写 !important 收不起来 */
+.xm-filters__clear[hidden],
+.xm-selbar[hidden],
+.xm-ctx[hidden],
+.xm-remind[hidden] {
+  display: none !important;
+}
+
+/* 多选时卡片左侧让出圆点的位置（比色条 5px + 3px 再多留一点，正文不挤） */
+.xm-panel__list[data-multi="1"] .xm-card {
+  padding-left: 34px;
+}
+.xm-card__pick {
+  position: absolute;
+  top: 50%;
+  left: 11px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
+  margin-top: -7.5px;
+  border: 1px solid var(--xm-line);
+  border-radius: 50%;
+  background: var(--xm-paper-back);
+  color: #fff;
+  /* 点卡片就够，圆点不抢事件（键盘/鼠标都落在 .xm-card 上） */
+  pointer-events: none;
+}
+.xm-card__pick svg {
+  width: 10px;
+  height: 10px;
+  opacity: 0;
+}
+.xm-panel__list[data-multi="1"] .xm-card__pick {
+  display: flex;
+}
+.xm-card[data-pick="1"] .xm-card__pick {
+  border-color: var(--xm-accent);
+  background: var(--xm-accent);
+}
+.xm-card[data-pick="1"] .xm-card__pick svg {
+  opacity: 1;
+}
+/* 勾中的卡片描一圈琥珀内边框：和键盘选中的外环叠起来也分得清 */
+.xm-card[data-pick="1"] {
+  outline: 1.5px solid var(--xm-accent);
+  outline-offset: -1px;
+}
+
+/* 批量操作条：两行（数量+退出 / 动作），浮在列表与脚注之间 */
+.xm-selbar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 8px 7px;
+  border-radius: var(--xm-radius-sm, 8px);
+  background: var(--xm-sheet-a);
+  box-shadow:
+    inset 0 0 0 1px var(--xm-accent-soft),
+    0 1px 2px rgba(90, 68, 20, 0.1);
+  animation: xm-pop-in var(--xm-dur-quick, 120ms) var(--xm-ease-out, ease-out) backwards;
+}
+.xm-selbar__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.xm-selbar__count {
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--xm-ink-soft);
+}
+.xm-selbar__row .xm-btn {
+  height: 22px;
+  padding: 0 7px;
+  font-size: 11.5px;
+}
+.xm-selbar__colors {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.xm-selbar__colors .xm-color-dot {
+  width: 14px;
+  height: 14px;
+}
+.xm-selbar__del {
+  color: var(--xm-danger);
+}
+
+/* ==========================================================================
+   9. 卡片右键菜单 / 提醒弹层（task-48）
+   两者都是 .xm-pop 的纸感弹层，但位置跟着鼠标走：paper.css 的 .xm-pop 是
+   absolute + 固定在右上角，这里改成 fixed，left/top 由 JS 量完视口再写。
+   ========================================================================== */
+.xm-ctx,
+.xm-remind {
+  position: fixed;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  z-index: 60;
+  width: calc(206px * var(--xm-font-scale, 1));
+}
+.xm-remind {
+  width: calc(222px * var(--xm-font-scale, 1));
+}
+.xm-ctx__colors {
+  margin: 2px 0 1px;
+}
+/* 「删除」用砖红：paper.css 里这条样式挂在 data-act="delete" 上，
+   右键菜单用的是 data-ctx-act，这里补一条同款 */
+.xm-ctx [data-ctx-act="delete"] {
+  color: var(--xm-danger);
+}
+/* 菜单项是"点一下就走"的动作，不要留蓝色选区 */
+.xm-ctx,
+.xm-remind {
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* 提醒弹层：三个快选按钮等分一行，输入框占满 */
+.xm-remind .xm-pop__quick {
+  margin-top: 6px;
+}
+.xm-remind .xm-pop__quick .xm-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 4px;
+  font-size: 11.5px;
+}
+.xm-remind .xm-field {
+  width: 100%;
+  min-width: 0;
+}

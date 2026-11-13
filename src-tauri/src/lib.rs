@@ -317,6 +317,14 @@ pub fn run() {
             reminder::spawn(&handle);
             // 吸边对齐的轮询线程：便签被拖动后静默 120ms 再吸附
             windows::spawn_snap_worker(&handle);
+
+            // 面板常驻任务栏：启动后确保面板窗口存在并最小化——任务栏里始终有
+            // 「小梦备忘录」按钮可点，但窗口不弹到桌面上、不抢焦点。
+            // 首启已经 open_panel 过，这里复用单例；失败只记日志，不影响启动。
+            match windows::ensure_panel_resident(&handle) {
+                Ok(_) => boot_log("setup: panel resident in taskbar"),
+                Err(err) => boot_log(&format!("setup: 面板驻留任务栏失败 {err}")),
+            }
             boot_log("setup: done");
             Ok(())
         })
@@ -343,7 +351,7 @@ pub fn run() {
                     }
                 }
                 WindowEvent::CloseRequested { api, .. } => {
-                    // 关闭窗口 ≠ 退出应用：便签/面板/设置都是隐藏，托盘常驻
+                    // 关闭窗口 ≠ 退出应用：便签/设置/提醒都是隐藏，托盘常驻
                     api.prevent_close();
                     if windows::is_note_window(&label) {
                         if let Some(store) = app.try_state::<Store>() {
@@ -354,6 +362,10 @@ pub fn run() {
                                 log_line(format!("隐藏便签失败：{err}"));
                             }
                         }
+                    } else if label == windows::PANEL_LABEL {
+                        // 管理面板常驻任务栏：关闭只最小化，不隐藏不销毁（页面原地保留，
+                        // 之后从任务栏/托盘/快捷键/单实例叫回来内容不丢）
+                        windows::minimize_panel_to_taskbar(window);
                     } else {
                         let _ = window.hide();
                         if label == windows::REMINDER_LABEL {

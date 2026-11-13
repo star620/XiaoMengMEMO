@@ -43,4 +43,6 @@ export const icons = {
   expand: wrap('<path d="M6 9l6 6 6-6"/>'),
   /** 剪贴板（面板里的"粘贴"） */
   clipboard: wrap('<rect x="6" y="4.5" width="12" height="16" rx="2"/><path d="M9.5 4.5V3.2h5v1.3"/><path d="M9 10h6M9 13.5h6"/>'),
+  /** 多选（虚线框 + 勾：面板工具栏进入多选模式） */
+  select: wrap('<rect x="3.5" y="3.5" width="17" height="17" rx="4" stroke-dasharray="3.2 3"/><path d="M8.5 12.2 11 14.7l4.6-5.2"/>'),
 } as const;

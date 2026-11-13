@@ -15,10 +15,19 @@ import { mountChrome } from "../shared/chrome";
 import { debounce } from "../shared/dom";
 import { icons } from "../shared/icons";
 import { subscribe } from "../shared/events";
-import { NOTE_COLORS } from "../shared/colors";
+import { NOTE_COLORS, colorLabel } from "../shared/colors";
 import type { NoteColor } from "../shared/colors";
 import { hideCurrent } from "../shared/window";
-import { clockTime, relativeTime, reminderLabel, todoProgress } from "../shared/format";
+import { copyText } from "../shared/clipboard";
+import {
+  clockTime,
+  fromDateTimeLocalValue,
+  relativeTime,
+  reminderLabel,
+  repeatLabel,
+  toDateTimeLocalValue,
+  todoProgress,
+} from "../shared/format";
 import { mdToPlain } from "../shared/markdown";
 import { diffStats, diffText } from "../shared/diff";
 import type { DiffOp } from "../shared/diff";
@@ -114,6 +123,8 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     icons.plus + " 随身笔记</button>" +
     '<button class="xm-btn" type="button" data-act="from-clipboard" ' +
     'title="把剪贴板里的文字变成一条备忘" aria-label="从剪贴板新建备忘">' + icons.clipboard + " 粘贴</button>" +
+    // 多选（task-48）：点一下进入批量模式，卡片左侧出现勾选圆点
+    '<button class="xm-btn xm-btn--icon" type="button" data-act="select" title="多选" aria-label="多选" aria-pressed="false">' + icons.select + "</button>" +
     '<button class="xm-btn xm-btn--icon" type="button" data-act="trash" title="回收站" aria-label="回收站">' + icons.trash + "</button>" +
     '<button class="xm-btn xm-btn--icon" type="button" data-act="settings" title="设置" aria-label="设置">' + icons.gear + "</button>" +
     "</div>" +
@@ -134,9 +145,28 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     '<button class="xm-chip xm-chip--dot" type="button" data-color="all" data-active="1" title="全部颜色" aria-label="全部颜色"><i class="xm-chip__dot"></i>全色</button>' +
     NOTE_COLORS.map((color) => '<button class="xm-chip xm-chip--dot" type="button" data-color="' + color.key + '" data-active="0" title="' + color.label + '" aria-label="' + color.label + '"><i class="xm-chip__dot"></i></button>').join("") +
     "</div>" +
-    '<button class="xm-filters__clear" type="button" data-act="filters-clear">清除</button>' +
+    // 只有 due/kind/color 真的在筛选时才出现（task-48：文案从「清除」改成「重置筛选」，只清筛选、不动搜索框）
+    '<button class="xm-filters__clear" type="button" data-act="filters-clear" hidden>重置筛选</button>' +
     "</div>" +
     '<div class="xm-panel__list" role="listbox" aria-label="便签列表"></div>' +
+    // 多选批量条（task-48）：选中 ≥1 张时浮在列表和脚注之间；不显示时整条收起
+    '<div class="xm-selbar" hidden>' +
+    '<div class="xm-selbar__row">' +
+    '<span class="xm-selbar__count">已选 0 张</span>' +
+    '<button class="xm-btn xm-btn--ghost" type="button" data-act="sel-exit">退出多选</button>' +
+    "</div>" +
+    '<div class="xm-selbar__row">' +
+    '<button class="xm-btn" type="button" data-act="sel-pin" title="把选中的便签置顶">' + icons.pin + " 置顶</button>" +
+    '<button class="xm-btn" type="button" data-act="sel-unpin" title="取消选中便签的置顶">取消置顶</button>' +
+    '<div class="xm-selbar__colors" role="group" aria-label="批量改颜色">' +
+    NOTE_COLORS.map((color) =>
+      '<button class="xm-color-dot" type="button" data-color="' + color.key + '" data-sel-color="' + color.key +
+      '" title="' + color.label + '" aria-label="改成' + color.label + '"></button>',
+    ).join("") +
+    "</div>" +
+    '<button class="xm-btn xm-selbar__del" type="button" data-act="sel-delete" title="删到回收站（5 秒内可撤销）">' + icons.trash + " 删除</button>" +
+    "</div>" +
+    "</div>" +
     '<footer class="xm-panel__foot">' +
     '<span class="xm-panel__hint">↑↓ 选择 · Enter 打开</span>' +
     '<span class="xm-panel__count"></span>' +
@@ -163,6 +193,39 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     "</div>" +
     "</div>" +
     '<div class="xm-toast" data-show="0"></div>' +
+    // 卡片右键菜单（task-48）：和便签菜单同一套纸感弹层 .xm-pop；fixed 定位跟着光标走
+    '<div class="xm-pop xm-pop--menu xm-ctx" role="menu" hidden>' +
+    '<button class="xm-pop__item" type="button" role="menuitem" data-ctx-act="open">打开</button>' +
+    '<button class="xm-pop__item" type="button" role="menuitem" data-ctx-act="pin">置顶</button>' +
+    '<div class="xm-pop__sep"></div>' +
+    '<div class="xm-pop__label">改颜色</div>' +
+    '<div class="xm-colors xm-ctx__colors" role="group" aria-label="改颜色">' +
+    NOTE_COLORS.map((color) =>
+      '<button class="xm-color-dot" type="button" data-color="' + color.key + '" data-ctx-color="' + color.key +
+      '" title="' + color.label + '" aria-label="改成' + color.label + '"></button>',
+    ).join("") +
+    "</div>" +
+    '<div class="xm-pop__sep"></div>' +
+    '<button class="xm-pop__item" type="button" role="menuitem" data-ctx-act="copy">复制正文</button>' +
+    '<button class="xm-pop__item" type="button" role="menuitem" data-ctx-act="remind">设置提醒</button>' +
+    '<div class="xm-pop__sep"></div>' +
+    '<button class="xm-pop__item" type="button" role="menuitem" data-ctx-act="delete">删除</button>' +
+    '<button class="xm-pop__item" type="button" role="menuitem" data-ctx-act="export">导出 Markdown</button>' +
+    "</div>" +
+    // 设置提醒弹层（右键菜单「设置提醒」打开）：快选 + 自定义时间
+    '<div class="xm-pop xm-pop--remind xm-remind" hidden>' +
+    '<div class="xm-pop__label">提醒我</div>' +
+    '<div class="xm-pop__quick">' +
+    '<button class="xm-btn xm-btn--ghost" type="button" data-remind-quick="10">10 分钟后</button>' +
+    '<button class="xm-btn xm-btn--ghost" type="button" data-remind-quick="60">1 小时后</button>' +
+    '<button class="xm-btn xm-btn--ghost" type="button" data-remind-quick="tomorrow">明天 9:00</button>' +
+    "</div>" +
+    '<div class="xm-pop__row"><input class="xm-field" type="datetime-local" aria-label="提醒时间" /></div>' +
+    '<div class="xm-pop__row">' +
+    '<button class="xm-btn xm-btn--primary" type="button" data-remind-act="set">设置提醒</button>' +
+    '<button class="xm-btn" type="button" data-remind-act="clear">清除</button>' +
+    "</div>" +
+    "</div>" +
     "</section>";
 
   const headEl = body.querySelector<HTMLElement>(".xm-panel__head")!;
@@ -181,6 +244,18 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   const trashBtn = body.querySelector<HTMLButtonElement>('[data-act="trash"]')!;
   const settingsBtn = body.querySelector<HTMLButtonElement>('[data-act="settings"]')!;
   const toastEl = body.querySelector<HTMLElement>(".xm-toast")!;
+  // 多选 / 批量条 / 右键菜单 / 提醒弹层（task-48）
+  const selectBtn = body.querySelector<HTMLButtonElement>('[data-act="select"]')!;
+  const filtersClearBtn = filtersEl.querySelector<HTMLButtonElement>('[data-act="filters-clear"]')!;
+  const selbarEl = body.querySelector<HTMLElement>(".xm-selbar")!;
+  const selCountEl = selbarEl.querySelector<HTMLElement>(".xm-selbar__count")!;
+  const ctxEl = body.querySelector<HTMLElement>(".xm-ctx")!;
+  const ctxPinItem = ctxEl.querySelector<HTMLElement>('[data-ctx-act="pin"]')!;
+  const ctxOpenItem = ctxEl.querySelector<HTMLElement>('[data-ctx-act="open"]')!;
+  const ctxRemindItem = ctxEl.querySelector<HTMLElement>('[data-ctx-act="remind"]')!;
+  const ctxColorsEl = ctxEl.querySelector<HTMLElement>(".xm-ctx__colors")!;
+  const remindEl = body.querySelector<HTMLElement>(".xm-remind")!;
+  const remindField = remindEl.querySelector<HTMLInputElement>(".xm-field")!;
   const versionEl = body.querySelector<HTMLElement>(".xm-version")!;
   const versionTimeEl = versionEl.querySelector<HTMLElement>(".xm-version__time")!;
   const versionCharsEl = versionEl.querySelector<HTMLElement>(".xm-version__chars")!;
@@ -235,6 +310,25 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   let undoPending: PendingUndo | null = null;
   let undoShownFor = "";
   let toastTimer = 0;
+
+  // ---------- 多选 / 批量操作（task-48）----------
+  /** 是否处于多选模式（卡片点击变成勾选） */
+  let multi = false;
+  /** 已勾选的便签 id：卡片是重建的，状态只认 id */
+  const picked = new Set<string>();
+  /** Shift 连选的锚点（列表下标） */
+  let pickAnchor = -1;
+  /** 批量删除后的撤销（多张用面板自己的，单张仍走 undo.ts 的跨窗口撤销） */
+  let batchUndo: { ids: string[]; timer: number } | null = null;
+
+  // ---------- 右键菜单 / 提醒弹层（task-48）----------
+  /** 右键菜单当前作用的便签 id（多选时是整个选中集合） */
+  let ctxIds: string[] = [];
+  /** 提醒弹层当前编辑的便签 */
+  let remindId = "";
+  /** 弹层锚点：右键光标位置，提醒弹层从菜单打开时沿用 */
+  let popX = 0;
+  let popY = 0;
 
   // ---------- 数据 -> 视图 ----------
   function toView(note: Note): CardView {
@@ -445,6 +539,8 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   // ---------- 通用提示 ----------
   /** 普通提示（不能点）；撤销提示另外用 showUndoToast，会打开点击 */
   function showToast(text: string, ms = 2200): void {
+    // 普通 toast 会顶掉批量撤销，撤销机会就作废了
+    clearBatchUndo();
     toastEl.textContent = text;
     toastEl.dataset.show = "1";
     toastEl.style.pointerEvents = "none";
@@ -461,6 +557,7 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
 
   let undoHideTimer = 0;
   function hideUndoToast(): void {
+    clearBatchUndo();
     window.clearTimeout(undoHideTimer);
     toastEl.dataset.show = "0";
     toastEl.style.pointerEvents = "none";
@@ -477,6 +574,7 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
       hideUndoToast();
       return;
     }
+    clearBatchUndo();
     undoPending = pending;
     undoShownFor = pending.noteId;
     toastEl.textContent = "已删除 · 撤销";
@@ -517,6 +615,8 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   /** 筛选条的高亮和计数：计数会跟着搜索词、类型、颜色一起变，切到别处则整条隐藏 */
   function syncFilterBar(): void {
     filtersEl.dataset.on = filtersActive() ? "1" : "0";
+    // 「重置筛选」只在真的筛过东西时出现，而且只清三个筛选芯片，不动搜索框（task-48）
+    filtersClearBtn.hidden = !filtersActive();
     filtersEl.querySelectorAll<HTMLButtonElement>("[data-due]").forEach((btn) => {
       const on = btn.dataset.due === filterDue;
       btn.dataset.active = on ? "1" : "0";
@@ -564,10 +664,14 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
 
   function renderList(): void {
     const key = keyword();
-    const active = !!key || filtersActive();
     views = sortNotes(notes)
       .filter((note) => matches(note, key) && matchesFilters(note))
       .map(toView);
+    // 过滤掉不再可见的勾选：批量操作只该作用于眼前这些卡
+    const visible = new Set(views.map((view) => view.note.id));
+    for (const id of Array.from(picked)) {
+      if (!visible.has(id)) picked.delete(id);
+    }
     listEl.innerHTML = "";
 
     if (views.length === 0) {
@@ -586,7 +690,9 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
       selected = -1;
       syncFilterBar();
       updateFilterBadges();
-      updateFoot(active ? "0 / " + notes.length : notes.length + " 张");
+      applyPicked();
+      syncSelbar();
+      updateFoot(footCountText());
       return;
     }
 
@@ -595,9 +701,11 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     });
     selected = Math.min(selected < 0 ? 0 : selected, views.length - 1);
     applySelection();
+    applyPicked();
     syncFilterBar();
     updateFilterBadges();
-    updateFoot(active ? views.length + " / " + notes.length : notes.length + " 张");
+    syncSelbar();
+    updateFoot(footCountText());
   }
 
   function renderTrash(): void {
@@ -688,7 +796,9 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
         ? "↑↓ 选择 · Enter 恢复 · Esc 返回"
         : mode === "history"
           ? "↑↓ 选择 · Enter 恢复 · Esc 返回"
-          : "↑↓ 选择 · Enter 打开 · Del 删除";
+          : multi
+            ? "点卡片勾选 · Shift 连选 · Ctrl+A 全选 · Esc 退出"
+            : "↑↓ 选择 · Enter 打开 · Del 删除";
     countEl.textContent = countText;
   }
 
@@ -1146,6 +1256,9 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   /** 进修改记录：头部换成「修改记录 + 便签字 + 返回」，列表换成旧版本卡片 */
   async function openHistory(noteId: string): Promise<void> {
     if (mode === "history" && historyNoteId === noteId) return;
+    // 进修改记录就退出多选、收起弹层（task-48 互斥要求）
+    if (multi) exitMulti(false);
+    closePops();
     closeVersionDetail();
     cancelDeleteArm();
     emptyArmed = false;
@@ -1244,6 +1357,13 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     card.tabIndex = 0;
     card.setAttribute("role", "option");
     card.setAttribute("aria-selected", "false");
+    card.dataset.pick = "0";
+
+    // 多选圆点：只有多选模式才显示（data-multi 在列表容器上），勾选态由 data-pick 驱动
+    const pick = document.createElement("span");
+    pick.className = "xm-card__pick";
+    pick.setAttribute("aria-hidden", "true");
+    pick.innerHTML = icons.check;
 
     const head = document.createElement("div");
     head.className = "xm-card__head";
@@ -1309,8 +1429,8 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     todos.textContent = view.progress;
 
     foot.append(time, todos);
-    if (vault) card.append(head, vault, foot);
-    else card.append(head, text, foot);
+    if (vault) card.append(pick, head, vault, foot);
+    else card.append(pick, head, text, foot);
     return card;
   }
 
@@ -1348,9 +1468,408 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     applyTrashSelection();
   }
 
+
+  // ---------- 多选（task-48）----------
+  // 状态：multi 开关 + picked 集合 + pickAnchor（Shift 连选锚点）。
+  // 卡片是每次 render 重建的，勾子/批量条统一在渲染后刷一遍，状态只认 id 集合。
+
+  /** 当前列表里已勾选的 id（顺序跟着列表顺序，批量操作好读） */
+  function pickedIds(): string[] {
+    return views.filter((view) => picked.has(view.note.id)).map((view) => view.note.id);
+  }
+
+  function pickedCount(): number {
+    return views.reduce((sum, view) => (picked.has(view.note.id) ? sum + 1 : sum), 0);
+  }
+
+  function footCountText(): string {
+    return keyword() || filtersActive() ? views.length + " / " + notes.length : notes.length + " 张";
+  }
+
+  /** 批量条：有选中才出现，数量和按钮可用状态一起刷 */
+  function syncSelbar(): void {
+    const count = pickedCount();
+    if (multi && count > 0) {
+      selbarEl.hidden = false;
+      selCountEl.textContent = "已选 " + count + " 张";
+    } else {
+      selbarEl.hidden = true;
+    }
+    selectBtn.dataset.active = multi ? "1" : "0";
+    selectBtn.setAttribute("aria-pressed", multi ? "true" : "false");
+    selectBtn.title = multi ? "退出多选" : "多选";
+  }
+
+  /** 把勾选态写到卡片上（data-pick 驱动纸感圆点 + 勾） */
+  function applyPicked(): void {
+    listEl.querySelectorAll<HTMLElement>(".xm-card").forEach((card) => {
+      const id = card.dataset.id ?? "";
+      card.dataset.pick = id && picked.has(id) ? "1" : "0";
+    });
+  }
+
+  function enterMulti(): void {
+    if (mode !== "list" || multi) return;
+    cancelDeleteArm();
+    multi = true;
+    pickAnchor = selected >= 0 ? selected : -1;
+    listEl.dataset.multi = "1";
+    renderList();
+  }
+
+  /** 退出多选：清空勾选、收起批量条；reRender=false 给「马上要换视图」的调用方省一次重排 */
+  function exitMulti(reRender = true): void {
+    if (!multi) return;
+    multi = false;
+    picked.clear();
+    pickAnchor = -1;
+    delete listEl.dataset.multi;
+    syncSelbar();
+    if (reRender && mode === "list") renderList();
+  }
+
+  /** 多选时点卡片：普通点切换、Shift 从锚点连选（追加，不清掉已有勾选） */
+  function pickCard(index: number, id: string, shift: boolean): void {
+    if (shift && pickAnchor >= 0) {
+      const from = Math.min(pickAnchor, index);
+      const to = Math.max(pickAnchor, index);
+      for (let i = from; i <= to; i += 1) {
+        const view = views[i];
+        if (view) picked.add(view.note.id);
+      }
+    } else if (picked.has(id)) {
+      picked.delete(id);
+      pickAnchor = index;
+    } else {
+      picked.add(id);
+      pickAnchor = index;
+    }
+    selected = index;
+    applySelection();
+    applyPicked();
+    syncSelbar();
+    updateFoot(footCountText());
+  }
+
+  // ---------- 批量操作 ----------
+  async function pinNotes(ids: string[], pin: boolean): Promise<void> {
+    if (busy || ids.length === 0) return;
+    busy = true;
+    try {
+      await Promise.all(ids.map((id) => api.setPinned(id, pin)));
+      showToast((pin ? "已置顶 " : "已取消置顶 ") + ids.length + " 张");
+      await loadAll();
+    } catch (error) {
+      console.error("批量置顶失败", error);
+      showToast("置顶失败：" + errorBrief(error), 2800);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function colorNotes(ids: string[], color: NoteColor): Promise<void> {
+    if (busy || ids.length === 0) return;
+    const wanted = new Set(ids);
+    const targets = notes.filter((note) => wanted.has(note.id));
+    if (targets.length === 0) return;
+    busy = true;
+    try {
+      // 换色走 save_note（后端自己 bump 更新时间）；只改颜色不会记一条修改记录
+      await Promise.all(targets.map((note) => api.saveNote({ ...note, color })));
+      showToast("已改成" + colorLabel(color) + " · " + targets.length + " 张");
+      await loadAll();
+    } catch (error) {
+      console.error("批量改颜色失败", error);
+      showToast("改颜色失败：" + errorBrief(error), 2800);
+    } finally {
+      busy = false;
+    }
+  }
+
+  /** 批量删除（进回收站）：多张用面板自己的批量撤销（单张还是走 undo.ts 的跨窗口撤销） */
+  async function deleteNotes(ids: string[]): Promise<void> {
+    if (busy || ids.length === 0) return;
+    busy = true;
+    try {
+      await Promise.all(ids.map((id) => api.deleteNote(id)));
+      ids.forEach((id) => picked.delete(id));
+      selected = -1;
+      await loadAll();
+      startBatchUndo(ids);
+    } catch (error) {
+      console.error("批量删除失败", error);
+      showToast("删除失败：" + errorBrief(error), 2800);
+    } finally {
+      busy = false;
+    }
+  }
+
+  // 批量撤销：只活 5 秒，点 toast 恢复。单张删除仍走 undo.ts（便签窗口也能看到那条撤销）
+  function startBatchUndo(ids: string[]): void {
+    clearBatchUndo();
+    batchUndo = {
+      ids: ids.slice(),
+      timer: window.setTimeout(() => {
+        batchUndo = null;
+        toastEl.dataset.show = "0";
+      }, UNDO_TTL),
+    };
+    toastEl.textContent = "已删除 " + ids.length + " 张 · 撤销";
+    toastEl.dataset.show = "1";
+    toastEl.style.pointerEvents = "auto";
+    toastEl.style.cursor = "pointer";
+    toastEl.title = "点一下把这几张从回收站恢复";
+    undoPending = null;
+    undoShownFor = "";
+    window.clearTimeout(toastTimer);
+    window.clearTimeout(undoHideTimer);
+  }
+
+  function clearBatchUndo(): void {
+    if (!batchUndo) return;
+    window.clearTimeout(batchUndo.timer);
+    batchUndo = null;
+  }
+
+  async function undoBatchDelete(): Promise<void> {
+    const pending = batchUndo;
+    if (!pending || busy) return;
+    const ids = pending.ids.slice();
+    busy = true;
+    try {
+      clearBatchUndo();
+      hideUndoToast();
+      await Promise.all(ids.map((id) => api.restoreNote(id)));
+      showToast("已恢复 " + ids.length + " 张");
+      await loadAll();
+    } catch (error) {
+      console.error("批量撤销失败", error);
+      showToast("恢复失败：" + errorBrief(error), 2800);
+    } finally {
+      busy = false;
+    }
+  }
+
+  // ---------- 右键菜单 / 提醒弹层（task-48）----------
+  function closeCtx(): void {
+    ctxEl.hidden = true;
+  }
+
+  function closeRemind(): void {
+    remindEl.hidden = true;
+    remindId = "";
+  }
+
+  function closePops(): void {
+    closeCtx();
+    closeRemind();
+  }
+
+  /** 弹层 fixed 定位：先摆出来量尺寸，再按视口夹紧（留 8px 边距，贴边不裁切） */
+  function placePop(el: HTMLElement, x: number, y: number): void {
+    el.hidden = false;
+    el.style.left = "0px";
+    el.style.top = "0px";
+    const rect = el.getBoundingClientRect();
+    const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
+    const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
+    el.style.left = Math.round(left) + "px";
+    el.style.top = Math.round(top) + "px";
+  }
+
+  function openCtx(x: number, y: number, card: HTMLElement | null): void {
+    if (mode !== "list") return;
+    const id = card?.dataset.id ?? "";
+    if (!id || !card) {
+      closeCtx();
+      return;
+    }
+    closeRemind();
+    // 多选里右键一张没勾的卡：先把勾选改成它自己（像资源管理器）
+    if (multi && !picked.has(id)) {
+      picked.clear();
+      picked.add(id);
+      const index = Number(card.dataset.index);
+      pickAnchor = Number.isFinite(index) ? index : -1;
+      applyPicked();
+      syncSelbar();
+    }
+    ctxIds = multi ? pickedIds() : [id];
+    if (ctxIds.length === 0) {
+      closeCtx();
+      return;
+    }
+    const index = Number(card.dataset.index);
+    if (Number.isFinite(index)) {
+      selected = index;
+      applySelection();
+    }
+    // 集合级操作才有意义；单张才给「打开 / 设置提醒」
+    const single = ctxIds.length === 1;
+    ctxOpenItem.hidden = !single;
+    ctxRemindItem.hidden = !single;
+    const targets = notes.filter((note) => ctxIds.includes(note.id));
+    const allPinned = targets.length > 0 && targets.every((note) => note.pinned);
+    ctxPinItem.textContent = allPinned ? "取消置顶" : "置顶";
+    const activeColor = single ? targets[0]?.color ?? "" : "";
+    ctxColorsEl.querySelectorAll<HTMLElement>("[data-ctx-color]").forEach((dot) => {
+      dot.dataset.active = dot.dataset.ctxColor === activeColor ? "1" : "0";
+    });
+    popX = x;
+    popY = y;
+    placePop(ctxEl, x, y);
+  }
+
+  function openRemind(id: string, x: number, y: number): void {
+    const note = notes.find((item) => item.id === id);
+    if (!note) return;
+    closeCtx();
+    remindId = id;
+    remindField.value = note.reminder_at ? toDateTimeLocalValue(note.reminder_at) : "";
+    popX = x;
+    popY = y;
+    placePop(remindEl, x, y);
+    remindField.focus();
+  }
+
+  async function setRemind(ts: number | null): Promise<void> {
+    const id = remindId;
+    if (!id || busy) return;
+    if (ts !== null && ts <= Date.now()) {
+      showToast("选一个将来的时间");
+      return;
+    }
+    busy = true;
+    try {
+      await api.setReminder(id, ts);
+      closeRemind();
+      showToast(ts === null ? "已清除提醒" : "提醒已设置：" + reminderLabel(ts));
+      await loadAll();
+    } catch (error) {
+      console.error("设置提醒失败", error);
+      showToast("设置失败：" + errorBrief(error), 2800);
+    } finally {
+      busy = false;
+    }
+  }
+
+  // ---------- 复制正文 / 导出 Markdown（task-48）----------
+  /** 一张便签的纯文本：标题 + 正文 / 待办行 / 随身笔记条目 */
+  function notePlainText(note: Note): string {
+    const lines: string[] = [toView(note).title];
+    if (note.kind === "todo") {
+      note.todos.forEach((item) => lines.push((item.done ? "- [x] " : "- [ ] ") + item.text));
+    } else if (note.kind === "vault") {
+      (note.items ?? []).forEach((item) => {
+        const label = item.label.trim() || "（未命名）";
+        lines.push(label + "：" + item.value);
+      });
+    } else if (note.content.trim()) {
+      lines.push(note.content.trim());
+    }
+    return lines.join("\n");
+  }
+
+  async function copyNotes(ids: string[]): Promise<void> {
+    const wanted = new Set(ids);
+    const targets = notes.filter((note) => wanted.has(note.id));
+    if (targets.length === 0) return;
+    const ok = await copyText(targets.map(notePlainText).join("\n\n"));
+    if (!ok) {
+      showToast("复制失败，再试一次");
+      return;
+    }
+    showToast(targets.length > 1 ? "已复制 " + targets.length + " 张正文" : "已复制正文");
+  }
+
+  /** 2026-11-14 00:23 —— 和后端导出的时间写法保持一致 */
+  function stampText(ts: number): string {
+    const d = new Date(ts || Date.now());
+    const p = (n: number) => (n < 10 ? "0" + n : String(n));
+    return (
+      d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+      " " + p(d.getHours()) + ":" + p(d.getMinutes())
+    );
+  }
+
+  /** 一条便签的 Markdown 段：结构和后端 export_notes 一模一样（同一张笔记两边导出长得一样） */
+  function mdForNote(note: Note): string {
+    const kindLabel = note.kind === "todo" ? "待办" : note.kind === "vault" ? "随身笔记" : "便签";
+    let md = "## " + toView(note).title + "\n\n";
+    md += "*" + kindLabel + (note.pinned ? " · 置顶" : "") + (note.locked ? " · 已锁定" : "");
+    md += " · 创建 " + stampText(note.created_at) + " · 更新 " + stampText(note.updated_at) + "*\n\n";
+    if (note.reminder_at) {
+      const repeat = repeatLabel(note.repeat);
+      md += "提醒：" + stampText(note.reminder_at) + (repeat ? "（" + repeat + "）" : "") + "\n\n";
+    }
+    if (note.kind === "memo") {
+      if (note.content.trim()) md += note.content.trimEnd() + "\n\n";
+    } else if (note.kind === "todo") {
+      note.todos.forEach((item) => {
+        md += "- [" + (item.done ? "x" : " ") + "] " + item.text;
+        if (item.due_at) md += "（截止 " + stampText(item.due_at) + "）";
+        md += "\n";
+      });
+      md += "\n";
+    } else {
+      (note.items ?? []).forEach((item) => {
+        const label = item.label.trim();
+        const value = item.value.trim();
+        if (!label && !value) return;
+        md += "- **" + label + "**：" + value;
+        const noteText = item.note.trim();
+        if (noteText) md += "（" + noteText + "）";
+        md += "\n";
+      });
+      md += "\n";
+    }
+    return md + "---\n\n";
+  }
+
+  /** 文件名里不能出现的字符换成短横（标题是用户随手写的） */
+  function fileSafe(text: string): string {
+    const cleaned = text.replace(/[\\/:*?"<>|\r\n]+/g, "-").replace(/\s+/g, " ").trim();
+    return (cleaned || "便签").slice(0, 40);
+  }
+
+  /** 纯前端导出：拼 Markdown → Blob → 临时 <a download>（后端没有单张导出命令，api.ts 也不让加） */
+  function exportMarkdown(ids: string[]): void {
+    const wanted = new Set(ids);
+    const targets = sortNotes(notes.filter((note) => wanted.has(note.id)));
+    if (targets.length === 0) return;
+    const now = Date.now();
+    let md = "";
+    if (targets.length > 1) {
+      md += "# 小梦备忘录 · 导出\n\n导出时间：" + stampText(now) + "　共 " + targets.length + " 张便签\n\n---\n\n";
+    }
+    md += targets.map(mdForNote).join("");
+    const name =
+      "小梦备忘录-" + fileSafe(targets.length === 1 ? toView(targets[0]).title : "导出") +
+      "-" + stampText(now).replace(/[-: ]/g, "") + ".md";
+    try {
+      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+      showToast(targets.length > 1 ? "已导出 " + targets.length + " 张的 Markdown" : "已导出 Markdown");
+    } catch (error) {
+      console.error("导出 Markdown 失败", error);
+      showToast("导出失败");
+    }
+  }
+
   // ---------- 视图切换 ----------
   function setMode(next: "list" | "trash"): void {
     if (mode === next) return;
+    // 批量条只属于便签列表：换视图前先退出多选
+    if (multi) exitMulti(false);
+    closePops();
     closeVersionDetail();
     cancelDeleteArm();
     emptyArmed = false;
@@ -1658,12 +2177,140 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     const card = target.closest<HTMLElement>(".xm-card");
     if (!card?.dataset.id) return;
     const index = Number(card.dataset.index);
+    if (multi && Number.isFinite(index)) {
+      // 多选模式下点卡片＝勾选（普通点切换、Shift 从锚点连选），不打开便签
+      pickCard(index, card.dataset.id, event.shiftKey);
+      return;
+    }
     if (Number.isFinite(index)) {
       selected = index;
       applySelection();
     }
     void openNote(card.dataset.id);
   });
+
+  // ---------- 多选 / 右键菜单 / 提醒弹层（task-48）----------
+  // 右键菜单：卡片上按右键弹纸感菜单；多选时作用于整个勾选集合
+  listEl.addEventListener("contextmenu", (event) => {
+    if (mode !== "list") return;
+    const target = event.target as HTMLElement;
+    if (!target.closest(".xm-card")) return;
+    event.preventDefault();
+    const card = target.closest<HTMLElement>(".xm-card");
+    openCtx(event.clientX, event.clientY, card);
+  });
+
+  selectBtn.addEventListener("click", () => {
+    if (mode !== "list") return;
+    if (multi) exitMulti();
+    else enterMulti();
+  });
+
+  selbarEl.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    if (target.closest('[data-act="sel-exit"]')) {
+      exitMulti();
+      return;
+    }
+    const dot = target.closest<HTMLElement>("[data-sel-color]");
+    if (dot?.dataset.selColor) {
+      void colorNotes(pickedIds(), dot.dataset.selColor as NoteColor);
+      return;
+    }
+    if (target.closest('[data-act="sel-pin"]')) {
+      void pinNotes(pickedIds(), true);
+      return;
+    }
+    if (target.closest('[data-act="sel-unpin"]')) {
+      void pinNotes(pickedIds(), false);
+      return;
+    }
+    if (target.closest('[data-act="sel-delete"]')) {
+      void deleteNotes(pickedIds());
+    }
+  });
+
+  ctxEl.addEventListener("click", (event) => {
+    if (ctxIds.length === 0) return;
+    const target = event.target as HTMLElement;
+    const ids = ctxIds.slice();
+    const dot = target.closest<HTMLElement>("[data-ctx-color]");
+    if (dot?.dataset.ctxColor) {
+      closeCtx();
+      void colorNotes(ids, dot.dataset.ctxColor as NoteColor);
+      return;
+    }
+    const item = target.closest<HTMLElement>("[data-ctx-act]");
+    const act = item?.dataset.ctxAct;
+    if (!act) return;
+    const targets = notes.filter((note) => ids.includes(note.id));
+    const allPinned = targets.length > 0 && targets.every((note) => note.pinned);
+    const x = popX;
+    const y = popY;
+    closeCtx();
+    if (act === "open") {
+      const id = ids[0];
+      if (id) void openNote(id);
+    } else if (act === "pin") {
+      void pinNotes(ids, !allPinned);
+    } else if (act === "copy") {
+      void copyNotes(ids);
+    } else if (act === "remind") {
+      openRemind(ids[0] ?? "", x, y);
+    } else if (act === "delete") {
+      // 右键删除是明确的动作：单张直接进回收站（有撤销），多张走批量
+      if (ids.length === 1) void deleteFromPanel(ids[0]);
+      else void deleteNotes(ids);
+    } else if (act === "export") {
+      exportMarkdown(ids);
+    }
+  });
+
+  remindEl.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const quick = target.closest<HTMLElement>("[data-remind-quick]");
+    if (quick?.dataset.remindQuick) {
+      const kind = quick.dataset.remindQuick;
+      let ts = 0;
+      if (kind === "10") ts = Date.now() + 10 * 60 * 1000;
+      else if (kind === "60") ts = Date.now() + 60 * 60 * 1000;
+      else {
+        const next = new Date();
+        next.setDate(next.getDate() + 1);
+        next.setHours(9, 0, 0, 0);
+        ts = next.getTime();
+      }
+      void setRemind(ts);
+      return;
+    }
+    if (target.closest('[data-remind-act="clear"]')) {
+      void setRemind(null);
+      return;
+    }
+    if (target.closest('[data-remind-act="set"]')) {
+      const ts = fromDateTimeLocalValue(remindField.value);
+      if (ts === null) {
+        showToast("先选一个时间");
+        return;
+      }
+      void setRemind(ts);
+    }
+  });
+
+  // 点弹层外面收起：捕获阶段先于卡片自己的 click，避免"菜单没收起就打开了便签"
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      const target = event.target as HTMLElement;
+      if (!ctxEl.hidden && !ctxEl.contains(target) && !target.closest(".xm-card")) closeCtx();
+      if (!remindEl.hidden && !remindEl.contains(target)) closeRemind();
+    },
+    true,
+  );
+
+  // 列表滚动 / 窗口尺寸变化：弹层跟着光标定位，位置一换算就废了，直接收起
+  listEl.addEventListener("scroll", () => closeCtx());
+  window.addEventListener("resize", () => closePops());
 
   listEl.addEventListener("pointermove", (event) => {
     const target = event.target as HTMLElement;
@@ -1768,6 +2415,11 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   });
 
   toastEl.addEventListener("click", () => {
+    // 多张删除的撤销由面板自己管（undo.ts 只存一条，装不下集合）
+    if (batchUndo) {
+      void undoBatchDelete();
+      return;
+    }
     if (undoPending) void undoDelete();
   });
 
@@ -1780,10 +2432,40 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
       searchEl.select();
       return;
     }
+    // Ctrl+A 全选（只在多选模式里接管；搜索框内还是走浏览器的全选文本）
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+      if (!multi || mode !== "list") return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.closest("input, textarea, [contenteditable='true']")) return;
+      event.preventDefault();
+      views.forEach((view) => picked.add(view.note.id));
+      pickAnchor = 0;
+      selected = views.length > 0 ? 0 : -1;
+      applySelection();
+      applyPicked();
+      syncSelbar();
+      updateFoot(footCountText());
+      return;
+    }
     if (event.key === "Escape") {
       if (!versionEl.hidden) {
         event.preventDefault();
         closeVersionDetail();
+        return;
+      }
+      if (!ctxEl.hidden) {
+        event.preventDefault();
+        closeCtx();
+        return;
+      }
+      if (!remindEl.hidden) {
+        event.preventDefault();
+        closeRemind();
+        return;
+      }
+      if (multi) {
+        event.preventDefault();
+        exitMulti();
         return;
       }
       if (mode === "history") {
@@ -1863,6 +2545,12 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
       return;
     }
     if (event.key === "Delete") {
+      // 多选时 Delete 作用于整个勾选集合（不弹二次确认，删除后可撤销）
+      if (multi && pickedIds().length > 0) {
+        event.preventDefault();
+        void deleteNotes(pickedIds());
+        return;
+      }
       const view = views[selected];
       if (view) {
         event.preventDefault();
@@ -1875,7 +2563,8 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
         const view = views[selected];
         if (view) {
           event.preventDefault();
-          void openNote(view.note.id);
+          if (multi) pickCard(selected, view.note.id, event.shiftKey);
+          else void openNote(view.note.id);
         }
       }
     }
@@ -1924,6 +2613,8 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     // openPanel 的事件先到、广播后到；这里不能把视图重置回列表，
     // 否则用户看到的就是「面板一闪又回列表」（task-28 A）。
     if (peekHistoryRequest()) return;
+    closePops();
+    if (multi) exitMulti(false);
     if (mode === "history") leaveHistory();
     else if (mode === "trash") setMode("list");
     reloadSoon();

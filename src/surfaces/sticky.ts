@@ -213,14 +213,43 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
   // ---------- 3. 常用节点 ----------
   const noteEl = query<HTMLElement>(root, ".xm-note");
 
-  /** 尺寸切换的观感：snap = 直接跳（默认，最稳）；veil = 先用纸色盖一下再揭开。
-      偏好存在 localStorage（各窗口同源共享），设置页里改。 */
+  /** 尺寸切换的观感：veil = 先用纸色盖一下再揭开（默认）；snap = 直接跳。
+      偏好存在 localStorage（各窗口同源共享），设置页里改。
+      为什么默认 veil：原生窗口换尺寸不是一帧完成的——实测从点击到窗口真正到位
+      会晚 70~300ms，中间那段时间纸已经在旧窗口里按新尺寸重排过。不盖住的话
+      用户看到的就是"卡一下 → 突然跳到新尺寸"，也就是反馈里的"抽搐"。 */
   function sizeFeelMode(): "snap" | "veil" {
     try {
-      return window.localStorage.getItem("xm.size-feel") === "veil" ? "veil" : "snap";
+      return window.localStorage.getItem("xm.size-feel") === "snap" ? "snap" : "veil";
     } catch {
-      return "snap";
+      return "veil";
     }
+  }
+
+  /**
+   * 等窗口宽度真的换成目标值（resize 事件里量 innerWidth），超时就放行。
+   * 只比宽度：收起态的高度是另一套逻辑，用宽度判断"这一档到位了"最稳。
+   */
+  function waitForWindowWidth(width: number, timeoutMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      if (Math.abs(window.innerWidth - width) <= 1) {
+        resolve();
+        return;
+      }
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(timer);
+        window.removeEventListener("resize", check);
+        resolve();
+      };
+      const check = () => {
+        if (Math.abs(window.innerWidth - width) <= 1) finish();
+      };
+      const timer = window.setTimeout(finish, timeoutMs);
+      window.addEventListener("resize", check);
+    });
   }
   /** 等浏览器真正画过两帧：只等一帧时，style 变更可能被同一帧的窗口提交吞掉 */
   function twoFrames(): Promise<void> {
@@ -1799,7 +1828,9 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
         const previous = { width: draft.width, height: draft.height };
         draft.width = preset.width;
         draft.height = preset.height;
-        const useVeil = sizeFeelMode() === "veil";
+        const useVeil =
+          sizeFeelMode() === "veil" &&
+          !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         const veilStart = performance.now();
         if (useVeil) sizeVeilEl.dataset.on = "1";
         void (async () => {
@@ -1829,10 +1860,14 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
             updateSizeSeg();
             toast("大小没能改好，请再试一次");
           } finally {
-            // 等新布局落定再揭开；期间又被点了一下就交给最新那次收尾
+            // 等新布局落定再揭开；期间又被点了一下就交给最新那次收尾。
+            // 关键：命令返回 ≠ 窗口已经换好尺寸（实测还会晚 30~300ms），
+            // 必须等 resize 事件把 innerWidth 换成目标宽度，否则遮罩提前揭开、
+            // 用户正好看见窗口"跳"的那一帧。
             if (useVeil && request === sizeRequest) {
               const elapsed = performance.now() - veilStart;
               if (elapsed < VEIL_HOLD_MS) await wait(VEIL_HOLD_MS - elapsed);
+              await waitForWindowWidth(preset.width, 700);
               await twoFrames();
               if (request === sizeRequest) {
                 delete sizeVeilEl.dataset.on; // 之后只剩 CSS 淡出，新布局已在遮罩下面重排好
