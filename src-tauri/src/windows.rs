@@ -535,12 +535,35 @@ fn read_size_geometry(window: &WebviewWindow) -> Result<SizeGeometry, String> {
     })
 }
 
+#[derive(Clone)]
 struct SizeWindow {
     probe: Option<std::sync::Arc<crate::size_probe::SizeProbe>>,
     #[cfg(windows)]
     hwnd: isize,
     #[cfg(not(windows))]
     window: WebviewWindow,
+}
+
+/// TASK-5 诊断：比较窗口所属线程与后台线程的同步调用，矩形与flags保持一致。
+fn commit_size_rect(
+    window: &WebviewWindow,
+    native: &SizeWindow,
+    rect: SizeRect,
+) -> Result<(bool, f64), String> {
+    if std::env::var("XM_SIZE_DISPATCH").as_deref() != Ok("owner") {
+        let ok = set_window_rect(native, rect);
+        return Ok((ok, crate::size_probe::epoch_ms()));
+    }
+    let native = native.clone();
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    window
+        .run_on_main_thread(move || {
+            let ok = set_window_rect(&native, rect);
+            let _ = tx.send((ok, crate::size_probe::epoch_ms()));
+        })
+        .map_err(|e| e.to_string())?;
+    rx.recv_timeout(Duration::from_secs(2))
+        .map_err(|e| e.to_string())
 }
 
 impl SizeWindow {
@@ -672,8 +695,9 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
                         probe.set_frame(submissions);
                     }
                     submit_started.get_or_insert_with(Instant::now);
-                    let ok = set_window_rect(native, geometry.rect_for(goal));
-                    native_return_epoch_ms = crate::size_probe::epoch_ms();
+                    let (ok, returned) =
+                        commit_size_rect(&window, native, geometry.rect_for(goal))?;
+                    native_return_epoch_ms = returned;
                     if ok {
                         Ok(())
                     } else {
