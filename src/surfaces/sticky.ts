@@ -228,6 +228,13 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
     });
   }
+  /** 柔光的时间刻度。原生窗口提交本身只要 20–40ms，不设最短保持时间的话，
+      遮罩会在同一帧里被加上又摘掉（实测只存在 23ms），肉眼等同没有。 */
+  const VEIL_HOLD_MS = 60;
+  const VEIL_FADE_MS = 130;
+  function wait(ms: number): Promise<void> {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
 
   /** 尺寸切换只淡入，不缩放；连点共用一个清理定时器。 */
   function markResizing(): void {
@@ -1793,10 +1800,15 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
         draft.width = preset.width;
         draft.height = preset.height;
         const useVeil = sizeFeelMode() === "veil";
+        const veilStart = performance.now();
         if (useVeil) sizeVeilEl.dataset.on = "1";
         void (async () => {
-          // 柔光模式下必须先让"盖住"真的画出来：否则窗口提交把这一帧一起吃掉了
-          if (useVeil) await twoFrames();
+          // 柔光模式：先等"盖住"画完（两帧）+ 淡入走完，再提交窗口，
+          // 否则窗口会在遮罩才半透明时就跳过去，用户照样看见跳变
+          if (useVeil) {
+            await twoFrames();
+            await wait(VEIL_HOLD_MS);
+          }
           try {
             // 队列中已被后续点击取代的目标不再调用后端；运行中的提交由后端合并最新目标。
             const saved = await queueWindowChange(() => {
@@ -1819,8 +1831,12 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
           } finally {
             // 等新布局落定再揭开；期间又被点了一下就交给最新那次收尾
             if (useVeil && request === sizeRequest) {
+              const elapsed = performance.now() - veilStart;
+              if (elapsed < VEIL_HOLD_MS) await wait(VEIL_HOLD_MS - elapsed);
               await twoFrames();
-              if (request === sizeRequest) delete sizeVeilEl.dataset.on;
+              if (request === sizeRequest) {
+                delete sizeVeilEl.dataset.on; // 之后只剩 CSS 淡出，新布局已在遮罩下面重排好
+              }
             }
           }
         })();
