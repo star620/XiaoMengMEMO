@@ -637,11 +637,13 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
     let window = window.clone();
     std::thread::spawn(move || {
         let started = Instant::now();
+        let worker_epoch_ms = crate::size_probe::epoch_ms();
         let prepared = read_size_geometry(&window)
             .and_then(|geometry| SizeWindow::new(&window).map(|native| (geometry, native)));
         let setup_us = started.elapsed().as_micros();
         let mut submissions = 0;
         let mut submit_started = None;
+        let mut native_return_epoch_ms = 0.0;
         // 只有目标被新请求覆盖时才再提交；没有逐帧 tick、插值或补跑队列。
         loop {
             let goal = {
@@ -662,7 +664,9 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
                         probe.set_frame(submissions);
                     }
                     submit_started.get_or_insert_with(Instant::now);
-                    if set_window_rect(native, geometry.rect_for(goal)) {
+                    let ok = set_window_rect(native, geometry.rect_for(goal));
+                    native_return_epoch_ms = crate::size_probe::epoch_ms();
+                    if ok {
                         Ok(())
                     } else {
                         Err(format!(
@@ -727,6 +731,8 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
             ));
             if let Some(probe) = &probe {
                 probe.emit(crate::size_probe::SizeCompletion {
+                    worker_epoch_ms,
+                    native_return_epoch_ms,
                     elapsed_us,
                     setup_us,
                     final_read_us,

@@ -34,12 +34,23 @@ pub(crate) struct CaptureSample {
 /// TASK-4：在写汇总日志之前停止计时，避免日志 IO 混入提交完成耗时。
 #[derive(Serialize)]
 pub(crate) struct SizeCompletion {
+    pub worker_epoch_ms: f64,
+    pub native_return_epoch_ms: f64,
     pub elapsed_us: u128,
     pub setup_us: u128,
     pub final_read_us: u128,
     pub submit_complete_us: u128,
     pub submissions: u64,
     pub final_match: bool,
+}
+
+/// 与前端 performance.timeOrigin + performance.now() 对齐的 UTC 毫秒时间戳。
+pub(crate) fn epoch_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+        * 1000.0
 }
 
 #[derive(Default, Serialize)]

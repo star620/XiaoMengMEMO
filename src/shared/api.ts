@@ -69,7 +69,16 @@ function canUseMock(): boolean {
 
 /** 统一入口：桌面端走 IPC，浏览器开发时走 mock，生产浏览器直接报错。 */
 function call<T>(cmd: string, args?: Args): Promise<T> {
-  if (isTauri()) return invoke<T>(cmd, args);
+  if (isTauri()) {
+    // TASK-5 诊断：显式记录真正的 invoke 起点；默认不启用、不持久化。
+    if ((globalThis as { __XM_SIZE_TRACE__?: boolean }).__XM_SIZE_TRACE__ &&
+        (cmd === "set_note_size" || cmd === "set_note_collapsed")) {
+      window.dispatchEvent(new CustomEvent("xm-size-invoke", {
+        detail: { cmd, args, epoch: performance.timeOrigin + performance.now() },
+      }));
+    }
+    return invoke<T>(cmd, args);
+  }
   if (!canUseMock()) {
     return Promise.reject(
       new Error("当前不在桌面应用里，浏览器调试请用 npm run dev 启动。"),
