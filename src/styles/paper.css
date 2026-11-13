@@ -2554,6 +2554,10 @@
 .xm-note[data-size-feel="veil"][data-resizing] .xm-note__tools { z-index: 22; }
 .xm-seg__item[data-size-pressed] { color: var(--xm-ink); }
 .xm-seg__item[data-size-pressed]::before { opacity: 1; transition: none; }
+/* 尺寸高亮即时换位，旧选项也不再渐退，避免短时间出现两块选中底色。 */
+.xm-seg__item[data-size]::before { transition: none; }
+.xm-note[data-size-feel="snap"][data-resizing] .xm-note__body,
+.xm-note[data-size-feel="snap"][data-resizing] .xm-note__foot { transition: none; }
 
 /* 收起/展开的高度由 Rust 端一次性提交（CSS 管不到原生窗口高度）；
    这里负责内容：正文和页脚淡出/淡入 + 略往上收，收起时窗口变矮才不会显得"内容被切掉"。 */

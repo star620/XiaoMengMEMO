@@ -95,8 +95,9 @@ export function createSizeFeel(note: HTMLElement, paper: HTMLElement) {
     note.dataset.sizeFeel = effective;
     note.dataset.resizing = "";
     // 快速点中尚在入场的菜单时，也不让旧 scale 动画叠到尺寸切换上。
-    for (const animation of paper.querySelector<HTMLElement>('[data-pop="menu"]')?.getAnimations() ?? []) {
-      if (animation instanceof CSSAnimation && animation.animationName === "xm-pop-in") animation.finish();
+    for (const animation of paper.getAnimations({ subtree: true })) {
+      if (animation instanceof CSSAnimation && animation.playState === "running" &&
+          (animation.animationName === "xm-pop-in" || animation.animationName === "xm-note-in")) animation.finish();
     }
     if (effective === "veil") {
       veil.hidden = false;
