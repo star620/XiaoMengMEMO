@@ -42,3 +42,7 @@ TASK-*.md
 RETURN-*.md
 REVIEW-*.md
 IMPLEMENTATION_RETURN.patch
+
+# 本地验收截图（只在本机看，不进仓库）
+docs/shots/
+docs/style-lab/
