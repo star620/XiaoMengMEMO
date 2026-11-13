@@ -784,7 +784,13 @@ impl Store {
 
     /// 窗口移动/缩放：只记内存，等定时线程或退出时统一写盘（避免频繁 IO）
     pub fn update_window_geometry(&self, id: &str, rect: WindowState) {
+        let probe = crate::size_probe::active(&crate::windows::note_label(id));
+        let measured = std::time::Instant::now();
         let mut state = self.lock();
+        let wait_us = measured.elapsed().as_micros();
+        if let Some(probe) = &probe {
+            probe.store_wait(wait_us);
+        }
         let Some(note) = state.notes.iter_mut().find(|note| note.id == id) else {
             return;
         };
@@ -1363,7 +1369,7 @@ impl Store {
             return;
         }
         let target = backup_dir.join(format!("notes-{now}.json"));
-        if let Err(err) = fs::copy(&self.notes_path, &target) {
+        if let Err(err) = copy_measured(&self.notes_path, &target) {
             log_line(format!("滚动快照失败：{err}"));
             return;
         }
@@ -1402,7 +1408,7 @@ impl Store {
         if !due {
             return;
         }
-        if let Err(err) = fs::copy(&self.notes_path, &self.bak_path) {
+        if let Err(err) = copy_measured(&self.notes_path, &self.bak_path) {
             log_line(format!("每日备份失败：{err}"));
         }
     }
@@ -1688,7 +1694,21 @@ fn apply_window_geometry(note: &mut Note, rect: WindowState, record_size: bool) 
 /// rename 失败（杀毒软件 / 索引服务短暂占用文件）时最多重试 3 次；
 /// 还不行就保留 .tmp 并另存一份 xxx.recover.json，**绝不退化成直接写主文件**——
 /// 那会先把好数据截断，一旦写入中途失败就把用户数据写没了。
+fn copy_measured(from: &Path, to: &Path) -> std::io::Result<u64> {
+    let probe = crate::size_probe::write_begin(to);
+    let result = fs::copy(from, to);
+    crate::size_probe::write_end(probe, result.is_ok());
+    result
+}
+
 fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let probe = crate::size_probe::write_begin(path);
+    let result = write_atomic_unmeasured(path, data);
+    crate::size_probe::write_end(probe, result.is_ok());
+    result
+}
+
+fn write_atomic_unmeasured(path: &Path, data: &[u8]) -> std::io::Result<()> {
     let file_name = path
         .file_name()
         .map(|name| name.to_string_lossy().to_string())

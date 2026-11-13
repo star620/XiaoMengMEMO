@@ -6,6 +6,7 @@ pub mod commands;
 pub mod hotkey;
 pub mod model;
 pub mod reminder;
+mod size_probe;
 pub mod startup;
 pub mod store;
 pub mod tray;
@@ -324,6 +325,7 @@ pub fn run() {
             let label = window.label().to_string();
             match event {
                 WindowEvent::Moved(_) => {
+                    size_probe::window_event(&label, "moved");
                     if windows::is_note_window(&label) {
                         if let Some(store) = app.try_state::<Store>() {
                             windows::capture_geometry(window, &store);
@@ -333,6 +335,7 @@ pub fn run() {
                     }
                 }
                 WindowEvent::Resized(_) => {
+                    size_probe::window_event(&label, "resized");
                     if windows::is_note_window(&label) {
                         if let Some(store) = app.try_state::<Store>() {
                             windows::capture_geometry(window, &store);

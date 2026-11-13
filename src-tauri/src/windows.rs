@@ -526,6 +526,7 @@ fn read_size_geometry(window: &WebviewWindow) -> Result<SizeGeometry, String> {
 }
 
 struct SizeWindow {
+    probe: Option<std::sync::Arc<crate::size_probe::SizeProbe>>,
     #[cfg(windows)]
     hwnd: isize,
     #[cfg(not(windows))]
@@ -543,12 +544,14 @@ impl SizeWindow {
         #[cfg(windows)]
         {
             Ok(Self {
+                probe: crate::size_probe::active(window.label()),
                 hwnd: window.hwnd().map_err(|err| err.to_string())?.0 as isize,
             })
         }
         #[cfg(not(windows))]
         {
             Ok(Self {
+                probe: crate::size_probe::active(window.label()),
                 window: window.clone(),
             })
         }
@@ -602,6 +605,7 @@ fn set_window_rect(window: &SizeWindow, rect: SizeRect) -> bool {
     // SWP_NOACTIVATE：不抢焦点，用户正在别处打字时不能被尺寸动画打断
     const SWP_NOZORDER: u32 = 0x0004;
     const SWP_NOACTIVATE: u32 = 0x0010;
+    let measured = Instant::now();
     let ok = unsafe {
         SetWindowPos(
             window.hwnd,
@@ -613,6 +617,10 @@ fn set_window_rect(window: &SizeWindow, rect: SizeRect) -> bool {
             SWP_NOZORDER | SWP_NOACTIVATE,
         )
     };
+    let measured_us = measured.elapsed().as_micros();
+    if let Some(probe) = &window.probe {
+        probe.set_rect(measured_us, ok != 0);
+    }
     ok != 0
 }
 
@@ -633,6 +641,7 @@ unsafe extern "system" {
 /// 非 Windows 平台（只用于开发调试）退化成两次原生调用
 #[cfg(not(windows))]
 fn set_window_rect(window: &SizeWindow, rect: SizeRect) -> bool {
+    let measured = Instant::now();
     let size_ok = window
         .window
         .set_size(tauri::PhysicalSize::new(
@@ -644,7 +653,11 @@ fn set_window_rect(window: &SizeWindow, rect: SizeRect) -> bool {
         .window
         .set_position(tauri::PhysicalPosition::new(rect.x, rect.y))
         .is_ok();
-    size_ok && pos_ok
+    let ok = size_ok && pos_ok;
+    if let Some(probe) = &window.probe {
+        probe.set_rect(measured.elapsed().as_micros(), ok);
+    }
+    ok
 }
 
 /// 朝目标走一帧；返回 true 表示已经精确到达。
@@ -712,6 +725,7 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
         return;
     }
     state.running = true;
+    let probe = crate::size_probe::begin(&label);
     drop(states);
 
     let duration = if system_animations_enabled() {
@@ -741,6 +755,9 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
         let mut timings = Vec::with_capacity(16);
         loop {
             let frame_started = Instant::now();
+            if let Some(probe) = &probe {
+                probe.set_frame(frames + 1);
+            }
             let goal = {
                 let states = size_states().lock().unwrap_or_else(|p| p.into_inner());
                 match states.get(&label).and_then(|state| state.goal) {
@@ -780,6 +797,7 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
             if result.is_ok() && state.goal != Some(goal) {
                 continue;
             }
+            crate::size_probe::end(&label);
             state.running = false;
             state.goal = None;
             if state.pending == 0 {
@@ -826,6 +844,9 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
                 result.is_ok(),
                 motion.target_rect
             ));
+            if let Some(probe) = &probe {
+                probe.emit();
+            }
             break;
         }
     });
@@ -937,18 +958,51 @@ pub fn capture_geometry(window: &Window, store: &Store) {
     let Some(id) = note_id_from_label(window.label()) else {
         return;
     };
+    let probe = crate::size_probe::active(window.label());
+    if let Some(probe) = &probe {
+        probe.capture_begin();
+    }
+    let mut sample = crate::size_probe::CaptureSample {
+        frame: probe.as_ref().map(|p| p.frame()).unwrap_or(0),
+        scale_us: 0,
+        position_us: 0,
+        inner_us: 0,
+        ok: false,
+    };
+    let measured = Instant::now();
     let mut scale = window.scale_factor().unwrap_or(1.0);
+    sample.scale_us = measured.elapsed().as_micros();
     if !scale.is_finite() || scale <= 0.0 {
         scale = 1.0;
     }
-    let (x, y) = match window.outer_position() {
+    let measured = Instant::now();
+    let position = window.outer_position();
+    sample.position_us = measured.elapsed().as_micros();
+    let (x, y) = match position {
         Ok(position) => (position.x as f64 / scale, position.y as f64 / scale),
-        Err(_) => return,
+        Err(_) => {
+            if let Some(probe) = &probe {
+                probe.capture(sample);
+            }
+            return;
+        }
     };
-    let (width, height) = match window.inner_size() {
+    let measured = Instant::now();
+    let size = window.inner_size();
+    sample.inner_us = measured.elapsed().as_micros();
+    let (width, height) = match size {
         Ok(size) => (size.width as f64 / scale, size.height as f64 / scale),
-        Err(_) => return,
+        Err(_) => {
+            if let Some(probe) = &probe {
+                probe.capture(sample);
+            }
+            return;
+        }
     };
+    sample.ok = true;
+    if let Some(probe) = &probe {
+        probe.capture(sample);
+    }
     store.update_window_geometry(
         id,
         WindowState {
