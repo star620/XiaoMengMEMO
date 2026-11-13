@@ -473,6 +473,17 @@ struct SizeTween {
     started: Instant,
 }
 
+/// 帧内分段只在内存记录，结束后统一写日志，避免日志 IO 污染单步测量。
+#[derive(Debug, Default)]
+struct SizeStepTiming {
+    size_us: u128,
+    position_us: u128,
+    outer_us: u128,
+    scale_us: u128,
+    set_rect_us: u128,
+    total_us: u128,
+}
+
 fn sample_size(from: SizeGoal, to: SizeGoal, elapsed: Duration, duration: Duration) -> SizeGoal {
     if elapsed >= duration {
         return to;
@@ -570,11 +581,20 @@ fn animate_step(
     goal: SizeGoal,
     tween: &mut Option<SizeTween>,
     duration: Duration,
+    timing: &mut SizeStepTiming,
 ) -> Result<bool, String> {
+    let stage = Instant::now();
     let size = window.inner_size().map_err(|err| err.to_string())?;
+    timing.size_us = stage.elapsed().as_micros();
+    let stage = Instant::now();
     let position = window.outer_position().map_err(|err| err.to_string())?;
+    timing.position_us = stage.elapsed().as_micros();
+    let stage = Instant::now();
     let outer = window.outer_size().map_err(|err| err.to_string())?;
+    timing.outer_us = stage.elapsed().as_micros();
+    let stage = Instant::now();
     let scale = window.scale_factor().map_err(|err| err.to_string())?;
+    timing.scale_us = stage.elapsed().as_micros();
     if !scale.is_finite() || scale <= 0.0 {
         return Err("窗口缩放比例无效".to_string());
     }
@@ -597,13 +617,16 @@ fn animate_step(
     let right = position.x + outer.width as i32;
     let x = right - cx;
     let y = position.y;
-    if (size.width as i32 != cx || size.height as i32 != cy)
-        && !set_window_rect(window, x, y, cx, cy)
-    {
-        return Err(format!(
-            "SetWindowPos 失败：{}",
-            std::io::Error::last_os_error()
-        ));
+    if size.width as i32 != cx || size.height as i32 != cy {
+        let stage = Instant::now();
+        let ok = set_window_rect(window, x, y, cx, cy);
+        timing.set_rect_us = stage.elapsed().as_micros();
+        if !ok {
+            return Err(format!(
+                "SetWindowPos 失败：{}",
+                std::io::Error::last_os_error()
+            ));
+        }
     }
     let target_cx = (goal.width * scale).round();
     let target_cy = (goal.height * scale).round();
@@ -645,6 +668,7 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
         let mut tween = None;
         let mut frames = 0;
         let mut max_step = Duration::ZERO;
+        let mut timings = Vec::with_capacity(16);
         loop {
             let frame_started = Instant::now();
             let goal = {
@@ -654,9 +678,12 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
                     None => break,
                 }
             };
-            let result = animate_step(&window, goal, &mut tween, duration);
+            let mut timing = SizeStepTiming::default();
+            let result = animate_step(&window, goal, &mut tween, duration, &mut timing);
             frames += 1;
             max_step = max_step.max(frame_started.elapsed());
+            timing.total_us = frame_started.elapsed().as_micros();
+            timings.push(timing);
             if matches!(result, Ok(false)) {
                 std::thread::sleep(SIZE_FRAME.saturating_sub(frame_started.elapsed()));
                 continue;
@@ -683,7 +710,7 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
             }
             // 每次动画只汇总一条，避免逐帧日志的磁盘 IO 干扰测量。
             crate::boot_log(&format!(
-                "size_animation {label}: goal={goal:?} elapsed_ms={} steps={frames} max_step_us={} ok={}",
+                "size_animation {label}: goal={goal:?} elapsed_ms={} steps={frames} max_step_us={} ok={} timings={timings:?}",
                 started.elapsed().as_millis(),
                 max_step.as_micros(),
                 result.is_ok()

@@ -2,7 +2,8 @@
 //! （三个都能在设置里改，改成空串表示不启用）。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Instant;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
@@ -15,6 +16,21 @@ use crate::windows;
 
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 static FAILURE_VISIBLE: AtomicBool = AtomicBool::new(false);
+// 三个动作各自去重，不能让「打开面板」吞掉紧接着的「新建」。
+static LAST_PRESS: Mutex<[Option<Instant>; 3]> = Mutex::new([None; 3]);
+const DEDUPE_WINDOW: Duration = Duration::from_millis(300);
+
+fn accept_press(last: &mut Option<Instant>, received: Instant) -> Result<(), Duration> {
+    if let Some(previous) = *last {
+        let elapsed = received.saturating_duration_since(previous);
+        if elapsed < DEDUPE_WINDOW {
+            // 忽略的按键不延长窗口，300ms 从上次接受的请求开始算。
+            return Err(elapsed);
+        }
+    }
+    *last = Some(received);
+    Ok(())
+}
 
 struct HotkeyTrace {
     request: u64,
@@ -115,15 +131,34 @@ pub fn on_hotkey_state(app: &AppHandle, shortcut: &Shortcut, state: ShortcutStat
     let note: Option<Shortcut> = settings.hotkey_new_note.trim().parse().ok();
     let panel: Option<Shortcut> = settings.hotkey_show_panel.trim().parse().ok();
     let quick: Option<Shortcut> = settings.hotkey_quick.trim().parse().ok();
-    if note.as_ref() == Some(shortcut) {
-        trace.log("dispatch=new_note");
-        on_hotkey_pressed(app, trace);
+    let action = if note.as_ref() == Some(shortcut) {
+        0
     } else if panel.as_ref() == Some(shortcut) {
-        on_panel_pressed(app);
+        1
     } else if quick.as_ref() == Some(shortcut) {
-        on_quick_pressed(app);
+        2
     } else {
         trace.log("ignored: shortcut does not match current settings");
+        return;
+    };
+    let accepted = {
+        let mut last = LAST_PRESS.lock().unwrap_or_else(|p| p.into_inner());
+        accept_press(&mut last[action], trace.started)
+    };
+    if let Err(elapsed) = accepted {
+        trace.log(format!(
+            "dedupe: ignore action={action} since_accepted_ms={}",
+            elapsed.as_millis()
+        ));
+        return;
+    }
+    if action == 0 {
+        trace.log("dispatch=new_note");
+        on_hotkey_pressed(app, trace);
+    } else if action == 1 {
+        on_panel_pressed(app);
+    } else {
+        on_quick_pressed(app);
     }
 }
 
@@ -210,4 +245,43 @@ fn cursor_logical(app: &AppHandle) -> Option<(f64, f64)> {
         }
     }
     Some((cursor.x / scale, cursor.y / scale))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn notes_from_presses(offsets_ms: &[u64]) -> Vec<crate::model::Note> {
+        let start = Instant::now();
+        let mut last = None;
+        offsets_ms
+            .iter()
+            .filter_map(|ms| {
+                accept_press(&mut last, start + Duration::from_millis(*ms))
+                    .ok()
+                    .map(|()| crate::model::Note::new(NoteKind::Memo, "yellow", 1.0, None))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn 双按只新建一张而四百毫秒后可再建() {
+        assert_eq!(notes_from_presses(&[0, 100]).len(), 1);
+        assert_eq!(notes_from_presses(&[0, 400]).len(), 2);
+    }
+
+    #[test]
+    fn 忽略请求不延长窗口且三百毫秒边界接受() {
+        assert_eq!(notes_from_presses(&[0, 100, 200, 299, 300]).len(), 2);
+    }
+
+    #[test]
+    fn 不同动作交替按各自去重() {
+        let start = Instant::now();
+        let mut last = [None; 3];
+        assert!(accept_press(&mut last[0], start).is_ok());
+        assert!(accept_press(&mut last[1], start + Duration::from_millis(50)).is_ok());
+        assert!(accept_press(&mut last[2], start + Duration::from_millis(75)).is_ok());
+        assert!(accept_press(&mut last[0], start + Duration::from_millis(100)).is_err());
+    }
 }

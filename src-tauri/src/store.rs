@@ -88,13 +88,22 @@ static LAST_SNAPSHOT_SECS: AtomicU64 = AtomicU64::new(0);
 const TRASH_KEEP_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
 /// 首次启动欢迎便签的正文：只讲三个最常用的操作，别吓到编程小白
-const WELCOME_TEXT: &str = "欢迎来到小梦备忘录！
+fn welcome_text(hotkey: &str) -> String {
+    let action = if hotkey.trim().is_empty() {
+        "右键托盘图标选择新建便签，就能开始记下一件事".to_string()
+    } else {
+        format!("任何时候按 {}，都能在鼠标位置新建一张便签", hotkey.trim())
+    };
+    format!(
+        "欢迎来到小梦备忘录！
 
 1. 直接在这里写字，按 Ctrl+S 保存（每次改动也会自动保存）
 2. 内容写长了，直接在正文里滚鼠标滚轮，纸边会淡出去
-3. 任何时候按 Ctrl+Alt+N，都能在鼠标位置新建一张便签
+3. {action}
 
-关掉便签不会丢数据，右键托盘上的小图标就能找回来。";
+关掉便签不会丢数据，右键托盘上的小图标就能找回来。"
+    )
+}
 
 /// 全部内存状态，统一放在一把锁后面
 pub struct AppState {
@@ -335,7 +344,7 @@ impl Store {
         Ok(note)
     }
 
-    /// 首次启动的欢迎便签：标题和正文写死，颜色/字号跟默认设置走
+    /// 首次启动的欢迎便签：快捷键、颜色和字号跟当前设置走，不改已有正文。
     pub fn seed_welcome_note(&self, app: &AppHandle) -> Result<Note, String> {
         let note = {
             let mut state = self.lock();
@@ -347,7 +356,7 @@ impl Store {
                 None,
             );
             note.title = "你好，我是小梦".to_string();
-            note.content = WELCOME_TEXT.to_string();
+            note.content = welcome_text(&settings.hotkey_new_note);
             state.notes.push(note.clone());
             self.persist_then_clean(&mut state)?;
             note
@@ -1792,6 +1801,37 @@ mod tests {
             trash: Mutex::new(Vec::new()),
             trash_path: dir.join("trash.json"),
         }
+    }
+
+    #[test]
+    fn 欢迎模板使用当前快捷键并处理禁用组合() {
+        let text = welcome_text("Ctrl+Q");
+        assert!(text.contains("按 Ctrl+Q"));
+        assert!(!text.contains("Ctrl+Alt+N"));
+        let disabled = welcome_text(" ");
+        assert!(disabled.contains("托盘图标选择新建便签"));
+        assert!(!disabled.contains("任何时候按"));
+    }
+
+    #[test]
+    fn 加载已有欢迎便签保留用户正文和快捷键() {
+        let dir = temp_dir("welcome-preserve");
+        let store = test_store(&dir);
+        let mut note = Note::new(NoteKind::Memo, "yellow", 1.0, None);
+        note.title = "你好，我是小梦".into();
+        note.content = "用户已改写的内容，旧快捷键 Ctrl+Alt+N 也应原样保留".into();
+        {
+            let mut state = store.lock();
+            state.settings.hotkey_new_note = "Ctrl+Q".into();
+            state.notes.push(note.clone());
+            store.persist_then_clean(&mut state).expect("写入测试数据");
+        }
+        let (notes, settings, fresh) = load_data(&store.notes_path, &store.bak_path);
+        assert!(!fresh);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].content, note.content);
+        assert_eq!(settings.hotkey_new_note, "Ctrl+Q");
+        fs::remove_dir_all(dir).ok();
     }
 
     /// 用本地时区构造毫秒时间戳（测试不依赖具体时区偏移）
