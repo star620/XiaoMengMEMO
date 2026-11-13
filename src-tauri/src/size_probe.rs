@@ -31,6 +31,17 @@ pub(crate) struct CaptureSample {
     pub ok: bool,
 }
 
+/// TASK-4：在写汇总日志之前停止计时，避免日志 IO 混入提交完成耗时。
+#[derive(Serialize)]
+pub(crate) struct SizeCompletion {
+    pub elapsed_us: u128,
+    pub setup_us: u128,
+    pub final_read_us: u128,
+    pub submit_complete_us: u128,
+    pub submissions: u64,
+    pub final_match: bool,
+}
+
 #[derive(Default, Serialize)]
 struct ProbeData {
     captures: Vec<CaptureSample>,
@@ -98,12 +109,13 @@ impl SizeProbe {
             .push((self.frame(), micros, ok));
     }
 
-    pub fn emit(&self) {
+    pub fn emit(&self, completion: SizeCompletion) {
         let data = self.data.lock().unwrap_or_else(|p| p.into_inner());
         let value = serde_json::json!({
             "id": self.id, "label": self.label, "begin_epoch_ms": self.epoch_ms,
             "elapsed_us": self.started.elapsed().as_micros(),
             "capture_calls": self.capture_calls.load(Ordering::Relaxed), "data": &*data,
+            "completion": completion,
         });
         drop(data);
         crate::boot_log(&format!("size_probe {value}"));

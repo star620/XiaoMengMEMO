@@ -390,18 +390,11 @@ fn force_repaint(window: &WebviewWindow) {
 /// 省那点电不值得，直接关掉这个特性。
 const WEBVIEW_ARGS: &str = "--disable-features=CalculateNativeWinOcclusion";
 
-// ---------- 尺寸动画 ----------
+// ---------- 尺寸切换 ----------
 //
-// 用户连点三档尺寸时，旧实现每次调用都新起一个线程，各自 set_size 再 set_position，
-// 线程互相抢、每帧右边缘都在跳，看起来就是「窗口和右上角菜单一起抽搐」。
-// 现在改成「目标状态 + 单驱动线程」：
-// * 每个窗口只有一份目标，最后一次点击说了算；
-// * 同一个窗口同一时间只有一个线程在跑，后来的调用只更新目标；
-// * 每帧用一次 Win32 SetWindowPos 同时改位置和大小（原子），右上角锚点不再抖。
-
-/// 时长按真实经过时间计算，不随原生调用变慢而逐帧拉长。
-const SIZE_DURATION: Duration = Duration::from_millis(160);
-const SIZE_FRAME: Duration = Duration::from_millis(16);
+// 同步 SetWindowPos 本身可能耗时几十毫秒，不再尝试逐帧变形。
+// 每个窗口只有一个目标槽和一个驱动线程；正常切换一次提交，
+// 提交期间的新请求覆盖目标，返回后只补交最新值，不排队。
 
 /// 一个窗口当前的尺寸目标（逻辑像素）
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -415,6 +408,28 @@ struct SizeState {
     goal: Option<SizeGoal>,
     running: bool,
     pending: usize,
+}
+
+impl SizeState {
+    /// 返回 true 的请求负责启动驱动，其余请求只覆盖目标槽。
+    fn request(&mut self, goal: SizeGoal) -> bool {
+        self.goal = Some(goal);
+        if self.running {
+            return false;
+        }
+        self.running = true;
+        true
+    }
+
+    /// 与 request 共用注册表锁；校验期间到达的新目标不能被收尾清掉。
+    fn complete(&mut self, submitted: SizeGoal, failed: bool) -> bool {
+        if !failed && self.goal != Some(submitted) {
+            return false;
+        }
+        self.running = false;
+        self.goal = None;
+        true
+    }
 }
 
 /// 同一把锁管理目标、运行状态和落盘前的保护，收尾不会丢掉刚更新的目标。
@@ -467,12 +482,6 @@ pub fn is_size_changing(label: &str) -> bool {
         .is_some_and(|state| state.running || state.pending != 0)
 }
 
-struct SizeTween {
-    from: SizeGoal,
-    to: SizeGoal,
-    started: Instant,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct SizeRect {
     x: i32,
@@ -495,13 +504,6 @@ impl SizeGeometry {
             y: self.rect.y,
             width,
             height: (goal.height * self.scale).round() as i32,
-        }
-    }
-
-    fn logical_size(&self, rect: SizeRect) -> SizeGoal {
-        SizeGoal {
-            width: rect.width as f64 / self.scale,
-            height: rect.height as f64 / self.scale,
         }
     }
 }
@@ -533,12 +535,6 @@ struct SizeWindow {
     window: WebviewWindow,
 }
 
-struct SizeMotion {
-    tween: Option<SizeTween>,
-    last_rect: SizeRect,
-    target_rect: SizeRect,
-}
-
 impl SizeWindow {
     fn new(window: &WebviewWindow) -> Result<Self, String> {
         #[cfg(windows)]
@@ -556,45 +552,6 @@ impl SizeWindow {
             })
         }
     }
-}
-
-/// 帧内分段只在内存记录，结束后统一写日志，避免日志 IO 污染单步测量。
-#[derive(Debug, Default)]
-struct SizeStepTiming {
-    set_rect_us: u128,
-    total_us: u128,
-}
-
-fn sample_size(from: SizeGoal, to: SizeGoal, elapsed: Duration, duration: Duration) -> SizeGoal {
-    if elapsed >= duration {
-        return to;
-    }
-    let progress = elapsed.as_secs_f64() / duration.as_secs_f64();
-    let eased = 1.0 - (1.0 - progress).powi(3);
-    SizeGoal {
-        width: from.width + (to.width - from.width) * eased,
-        height: from.height + (to.height - from.height) * eased,
-    }
-}
-
-#[cfg(windows)]
-fn system_animations_enabled() -> bool {
-    const SPI_GETCLIENTAREAANIMATION: u32 = 0x1042;
-    let mut enabled: i32 = 1;
-    let ok = unsafe {
-        SystemParametersInfoW(
-            SPI_GETCLIENTAREAANIMATION,
-            0,
-            (&mut enabled as *mut i32).cast(),
-            0,
-        )
-    };
-    ok == 0 || enabled != 0
-}
-
-#[cfg(not(windows))]
-fn system_animations_enabled() -> bool {
-    true
 }
 
 /// 用一次 Win32 SetWindowPos 原子地完成「移动 + 改尺寸」。
@@ -630,12 +587,6 @@ unsafe extern "system" {
     /// after=0 且带 SWP_NOZORDER 时忽略；cx/cy 是物理像素
     fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32)
         -> i32;
-    fn SystemParametersInfoW(
-        action: u32,
-        param: u32,
-        value: *mut std::ffi::c_void,
-        flags: u32,
-    ) -> i32;
 }
 
 /// 非 Windows 平台（只用于开发调试）退化成两次原生调用
@@ -660,54 +611,11 @@ fn set_window_rect(window: &SizeWindow, rect: SizeRect) -> bool {
     ok
 }
 
-/// 朝目标走一帧；返回 true 表示已经精确到达。
-/// 几何和句柄来自启动快照；运行期只算插值，最多提交一次物理矩形。
-fn animate_step(
-    window: &SizeWindow,
-    geometry: &SizeGeometry,
-    goal: SizeGoal,
-    motion: &mut SizeMotion,
-    duration: Duration,
-    timing: &mut SizeStepTiming,
-) -> Result<bool, String> {
-    // 新目标从最后成功提交的物理尺寸接续，不重新向系统同步查询。
-    if motion.tween.as_ref().map(|tween| tween.to) != Some(goal) {
-        motion.target_rect = geometry.rect_for(goal);
-        motion.tween = Some(SizeTween {
-            from: geometry.logical_size(motion.last_rect),
-            to: goal,
-            started: Instant::now(),
-        });
-    }
-    let tween = motion.tween.as_ref().expect("尺寸轨迹已初始化");
-    let elapsed = tween.started.elapsed();
-    let done = elapsed >= duration || tween.from == tween.to;
-    let next = if done {
-        motion.target_rect
-    } else {
-        geometry.rect_for(sample_size(tween.from, tween.to, elapsed, duration))
-    };
-    if next != motion.last_rect {
-        let stage = Instant::now();
-        let ok = set_window_rect(window, next);
-        timing.set_rect_us = stage.elapsed().as_micros();
-        if !ok {
-            return Err(format!(
-                "SetWindowPos 失败：{}",
-                std::io::Error::last_os_error()
-            ));
-        }
-        motion.last_rect = next;
-    }
-    // 不因像素取整提前结束，完整走到目标时长；减少动效仍可立即到位。
-    Ok(done)
-}
-
 /// 把窗口尺寸驱动到指定逻辑大小（宽、高）。
 /// 可以随便连续调用：只有最后一次的目标生效，重复调用会立即返回。
 pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
     if !to_width.is_finite() || !to_height.is_finite() {
-        log_line(format!("尺寸动画：目标尺寸无效（{}）", window.label()));
+        log_line(format!("尺寸切换：目标尺寸无效（{}）", window.label()));
         return;
     }
     // 宽度不能小于 MIN_WIDTH；高度用 MIN_NOTE_HEIGHT(56)，
@@ -720,44 +628,22 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
 
     let mut states = size_states().lock().unwrap_or_else(|p| p.into_inner());
     let state = states.entry(label.clone()).or_default();
-    state.goal = Some(goal);
-    if state.running {
+    if !state.request(goal) {
         return;
     }
-    state.running = true;
     let probe = crate::size_probe::begin(&label);
     drop(states);
 
-    let duration = if system_animations_enabled() {
-        SIZE_DURATION
-    } else {
-        Duration::ZERO
-    };
     let window = window.clone();
     std::thread::spawn(move || {
         let started = Instant::now();
         let prepared = read_size_geometry(&window)
             .and_then(|geometry| SizeWindow::new(&window).map(|native| (geometry, native)));
         let setup_us = started.elapsed().as_micros();
-        let initial_rect = prepared.as_ref().map(|(g, _)| g.rect).unwrap_or(SizeRect {
-            x: 0,
-            y: 0,
-            width: 0,
-            height: 0,
-        });
-        let mut motion = SizeMotion {
-            tween: None,
-            last_rect: initial_rect,
-            target_rect: initial_rect,
-        };
-        let mut frames = 0;
-        let mut max_step = Duration::ZERO;
-        let mut timings = Vec::with_capacity(16);
+        let mut submissions = 0;
+        let mut submit_started = None;
+        // 只有目标被新请求覆盖时才再提交；没有逐帧 tick、插值或补跑队列。
         loop {
-            let frame_started = Instant::now();
-            if let Some(probe) = &probe {
-                probe.set_frame(frames + 1);
-            }
             let goal = {
                 let states = size_states().lock().unwrap_or_else(|p| p.into_inner());
                 match states.get(&label).and_then(|state| state.goal) {
@@ -765,61 +651,56 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
                     None => break,
                 }
             };
-            let mut timing = SizeStepTiming::default();
+            let target_rect = prepared.as_ref().ok().map(|(g, _)| g.rect_for(goal));
             let result = prepared
                 .as_ref()
                 .map_err(Clone::clone)
                 .and_then(|(geometry, native)| {
-                    animate_step(native, geometry, goal, &mut motion, duration, &mut timing)
+                    submissions += 1;
+                    if let Some(probe) = &probe {
+                        // 沿用探针的 frame 字段，TASK-4 中它是提交序号，不是动画帧。
+                        probe.set_frame(submissions);
+                    }
+                    submit_started.get_or_insert_with(Instant::now);
+                    if set_window_rect(native, geometry.rect_for(goal)) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "SetWindowPos 失败：{}",
+                            std::io::Error::last_os_error()
+                        ))
+                    }
                 });
-            frames += 1;
-            max_step = max_step.max(frame_started.elapsed());
-            timing.total_us = frame_started.elapsed().as_micros();
-            timings.push(timing);
-            if matches!(result, Ok(false)) {
-                let remaining = duration.saturating_sub(
-                    motion
-                        .tween
-                        .as_ref()
-                        .expect("尺寸轨迹存在")
-                        .started
-                        .elapsed(),
-                );
-                std::thread::sleep(
-                    SIZE_FRAME
-                        .saturating_sub(frame_started.elapsed())
-                        .min(remaining),
-                );
+            if result.is_ok()
+                && size_states()
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&label)
+                    .and_then(|state| state.goal)
+                    != Some(goal)
+            {
                 continue;
             }
+            let verify_started = Instant::now();
+            let final_geometry = read_size_geometry(&window);
+            let final_read_us = verify_started.elapsed().as_micros();
+            let final_match = final_geometry
+                .as_ref()
+                .is_ok_and(|g| Some(g.rect) == target_rect);
             let mut states = size_states().lock().unwrap_or_else(|p| p.into_inner());
             let state = states.get_mut(&label).expect("运行中的尺寸状态存在");
-            if result.is_ok() && state.goal != Some(goal) {
+            if !state.complete(goal, result.is_err()) {
                 continue;
             }
             crate::size_probe::end(&label);
-            state.running = false;
-            state.goal = None;
             if state.pending == 0 {
                 states.remove(&label);
             }
             // 注册表锁内不能调用窗口或 Store，窗口事件会反向查询动画状态。
             drop(states);
             if let Err(err) = &result {
-                log_line(format!("尺寸动画失败（{label}）：{err}"));
+                log_line(format!("尺寸切换失败（{label}）：{err}"));
             }
-            let motion_ms = motion
-                .tween
-                .as_ref()
-                .map(|motion| motion.started.elapsed().as_millis())
-                .unwrap_or(0);
-            let verify_started = Instant::now();
-            let final_geometry = read_size_geometry(&window);
-            let final_read_us = verify_started.elapsed().as_micros();
-            let final_match = final_geometry
-                .as_ref()
-                .map(|g| g.rect == motion.target_rect)
-                .unwrap_or(false);
             let app = window.app_handle();
             if let (Some(store), Ok(geometry), Some(id)) = (
                 app.try_state::<Store>(),
@@ -836,23 +717,30 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
                     },
                 );
             }
-            // 每次动画只汇总一条，避免逐帧日志的磁盘 IO 干扰测量。
+            let elapsed_us = started.elapsed().as_micros();
+            let submit_complete_us = submit_started.map(|t| t.elapsed().as_micros()).unwrap_or(0);
+            // 先停表，再汇总日志；elapsed 包含 setup，submit_complete 从第一次原生提交计到收尾。
             crate::boot_log(&format!(
-                "size_animation {label}: goal={goal:?} elapsed_ms={} steps={frames} max_step_us={} ok={} driver=cached_geometry setup_us={setup_us} motion_ms={motion_ms} final_read_us={final_read_us} final_match={final_match} target_rect={:?} final_geometry={final_geometry:?} timings={timings:?}",
-                started.elapsed().as_millis(),
-                max_step.as_micros(),
+                "size_snap {label}: goal={goal:?} elapsed_ms={} submissions={submissions} submit_complete_us={submit_complete_us} ok={} setup_us={setup_us} final_read_us={final_read_us} final_match={final_match} target_rect={target_rect:?} final_geometry={final_geometry:?}",
+                elapsed_us / 1000,
                 result.is_ok(),
-                motion.target_rect
             ));
             if let Some(probe) = &probe {
-                probe.emit();
+                probe.emit(crate::size_probe::SizeCompletion {
+                    elapsed_us,
+                    setup_us,
+                    final_read_us,
+                    submit_complete_us,
+                    submissions,
+                    final_match,
+                });
             }
             break;
         }
     });
 }
 
-/// 按折叠状态调整窗口高度（宽度不变），带一小段高度动画
+/// 按折叠状态一次提交窗口高度（宽度不变）
 pub fn apply_collapsed(window: &WebviewWindow, collapsed: bool, width: f64, height: f64) {
     let to = if collapsed { COLLAPSED_HEIGHT } else { height };
     drive_size(window, width, to);
@@ -1565,7 +1453,7 @@ mod tests {
     }
 
     #[test]
-    fn 缓存几何在负坐标和非整数缩放下保持右上角() {
+    fn 单次目标矩形在负坐标和非整数缩放下保持右上角() {
         let geometry = SizeGeometry {
             scale: 1.25,
             rect: SizeRect {
@@ -1575,84 +1463,46 @@ mod tests {
                 height: 475,
             },
         };
-        let from = geometry.logical_size(geometry.rect);
-        let goal = SizeGoal {
-            width: 400.0,
-            height: 500.0,
-        };
-        for millis in 0..=160 {
-            let rect = geometry.rect_for(sample_size(
-                from,
-                goal,
-                Duration::from_millis(millis),
-                SIZE_DURATION,
-            ));
+        for (width, height) in [
+            (280.0, 330.0),
+            (320.0, 380.0),
+            (400.0, 500.0),
+            (320.0, 64.0),
+        ] {
+            let rect = geometry.rect_for(SizeGoal { width, height });
             assert_eq!(rect.x + rect.width, -1200);
             assert_eq!(rect.y, 50);
+            assert_eq!(rect.width, (width * 1.25).round() as i32);
+            assert_eq!(rect.height, (height * 1.25).round() as i32);
         }
-        assert_eq!(
-            geometry.rect_for(goal),
-            SizeRect {
-                x: -1700,
-                y: 50,
-                width: 500,
-                height: 625
-            }
-        );
     }
 
     #[test]
-    fn 缓存已提交帧换目标不会退回启动尺寸() {
-        let geometry = SizeGeometry {
-            scale: 1.5,
-            rect: SizeRect {
-                x: 120,
-                y: 240,
-                width: 480,
-                height: 570,
-            },
-        };
+    fn 提交期间五次改目标只保留最新值且收尾不丢新请求() {
         let first = SizeGoal {
             width: 400.0,
             height: 500.0,
         };
-        let submitted = geometry.rect_for(sample_size(
-            geometry.logical_size(geometry.rect),
-            first,
-            Duration::from_millis(48),
-            SIZE_DURATION,
-        ));
-        let next = SizeGoal {
-            width: 280.0,
-            height: 330.0,
-        };
-        assert_eq!(
-            geometry.rect_for(sample_size(
-                geometry.logical_size(submitted),
-                next,
-                Duration::ZERO,
-                SIZE_DURATION
-            )),
-            submitted
-        );
-        assert_eq!(
-            geometry.rect_for(sample_size(
-                geometry.logical_size(submitted),
-                next,
-                SIZE_DURATION,
-                SIZE_DURATION
-            )),
-            geometry.rect_for(next)
-        );
-        assert_eq!(
-            geometry.rect_for(sample_size(
-                geometry.logical_size(submitted),
-                next,
-                Duration::ZERO,
-                Duration::ZERO
-            )),
-            geometry.rect_for(next)
-        );
+        let mut state = SizeState::default();
+        assert!(state.request(first));
+        let mut latest = first;
+        // 模拟一次原生提交尚未返回：新请求不能启动五个驱动或形成目标队列。
+        for width in [280.0, 320.0, 400.0, 320.0, 280.0] {
+            latest = SizeGoal {
+                width,
+                height: 330.0,
+            };
+            assert!(!state.request(latest));
+        }
+        assert_eq!(state.goal, Some(latest));
+        assert!(!state.complete(first, false));
+        assert!(state.running);
+        // 与运行时相同：第一次提交完成后，接着提交的只有最后那个目标。
+        assert!(state.complete(latest, false));
+        assert!(!state.running);
+        assert_eq!(state.goal, None);
+        // 收尾已完成后到达的请求必须能重新启动驱动。
+        assert!(state.request(first));
     }
 
     #[test]
@@ -1780,54 +1630,31 @@ mod tests {
     }
 
     #[test]
-    fn 尺寸动画即使漏帧也按经过时间到达目标() {
-        let from = SizeGoal {
-            width: 320.0,
-            height: 500.0,
-        };
-        let to = SizeGoal {
-            width: 400.0,
-            height: 64.0,
-        };
-        let mut previous = from;
-        // 模拟中途原生调用停顿，不补跑已经错过的中间帧。
-        for millis in [0, 16, 32, 112, 160, 320] {
-            let next = sample_size(from, to, Duration::from_millis(millis), SIZE_DURATION);
-            assert!(next.width >= previous.width && next.width <= to.width);
-            assert!(next.height <= previous.height && next.height >= to.height);
-            previous = next;
-        }
-        assert_eq!(previous, to);
-        assert_eq!(sample_size(from, to, SIZE_DURATION, SIZE_DURATION), to);
-    }
-
-    #[test]
-    fn 连点改目标从当前尺寸起步且减少动效直接到位() {
-        let from = SizeGoal {
+    fn 原生提交失败会释放运行状态允许重试() {
+        let goal = SizeGoal {
             width: 320.0,
             height: 380.0,
         };
-        let first = SizeGoal {
-            width: 400.0,
-            height: 500.0,
+        let mut state = SizeState::default();
+        assert!(state.request(goal));
+        assert!(state.complete(goal, true));
+        assert_eq!(state.goal, None);
+        assert!(state.request(goal));
+    }
+
+    #[test]
+    fn 重复目标在原生提交中合并不再补交() {
+        let goal = SizeGoal {
+            width: 320.0,
+            height: 64.0,
         };
-        let next = SizeGoal {
-            width: 280.0,
-            height: 330.0,
-        };
-        let current = sample_size(from, first, Duration::from_millis(48), SIZE_DURATION);
-        assert_eq!(
-            sample_size(current, next, Duration::ZERO, SIZE_DURATION),
-            current
-        );
-        assert_eq!(
-            sample_size(current, next, SIZE_DURATION, SIZE_DURATION),
-            next
-        );
-        assert_eq!(
-            sample_size(current, next, Duration::ZERO, Duration::ZERO),
-            next
-        );
+        let mut state = SizeState::default();
+        assert!(state.request(goal));
+        for _ in 0..5 {
+            assert!(!state.request(goal));
+        }
+        assert!(state.complete(goal, false));
+        assert!(!state.running);
     }
 
     #[test]

@@ -76,6 +76,7 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
   let sizeRequest = 0;
   let windowChanges: Promise<void> = Promise.resolve();
   let pendingWindowChanges = 0;
+  let resizeFadeTimer = 0;
 
   /** 折叠和尺寸共用队列，让后端收到的顺序与点击顺序一致。 */
   function queueWindowChange<T>(change: () => Promise<T>): Promise<T> {
@@ -210,6 +211,20 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
 
   // ---------- 3. 常用节点 ----------
   const noteEl = query<HTMLElement>(root, ".xm-note");
+
+  /** 尺寸切换只淡入，不缩放；连点共用一个清理定时器。 */
+  function markResizing(): void {
+    noteEl.dataset.resizing = "";
+    if (resizeFadeTimer) window.clearTimeout(resizeFadeTimer);
+    resizeFadeTimer = window.setTimeout(() => {
+      delete noteEl.dataset.resizing;
+      // 移除覆盖规则会重建默认入场动画；直接收至终点，避免再“落纸”一次。
+      for (const animation of paperEl.getAnimations()) {
+        if (animation instanceof CSSAnimation && animation.animationName === "xm-note-in") animation.finish();
+      }
+      resizeFadeTimer = 0;
+    }, 100);
+  }
   const paperEl = query<HTMLElement>(root, ".xm-note__paper");
   const dragEl = query<HTMLElement>(root, ".xm-note__drag");
   const titleInput = query<HTMLInputElement>(root, ".xm-note__title");
@@ -1035,8 +1050,12 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     noteEl.dataset.collapsed = next ? "1" : "0";
     updateMenuItems();
     try {
-      const saved = await queueWindowChange(() => api.setNoteCollapsed(draft.id, next));
-      if (request !== collapseRequest) return;
+      const saved = await queueWindowChange(() => {
+        if (request !== collapseRequest) return Promise.resolve(null);
+        markResizing();
+        return api.setNoteCollapsed(draft.id, next);
+      });
+      if (!saved || request !== collapseRequest) return;
       // 只同步后端算出来的字段，别把草稿里还没保存的改动覆盖掉
       draft.collapsed = saved.collapsed;
       draft.updated_at = saved.updated_at;
@@ -1755,10 +1774,14 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
         const previous = { width: draft.width, height: draft.height };
         draft.width = preset.width;
         draft.height = preset.height;
-        // 只发一次：窗口动画由后端「最后一次点击说了算」，前端不再补发 setNoteSize
-        void queueWindowChange(() => api.setNoteSize(draft.id, preset.width, preset.height))
+        // 队列中已被后续点击取代的目标不再调用后端；运行中的提交由后端合并最新目标。
+        void queueWindowChange(() => {
+          if (request !== sizeRequest) return Promise.resolve(null);
+          markResizing();
+          return api.setNoteSize(draft.id, preset.width, preset.height);
+        })
           .then((saved) => {
-            if (request !== sizeRequest) return;
+            if (!saved || request !== sizeRequest) return;
             draft.width = saved.width;
             draft.height = saved.height;
             draft.updated_at = saved.updated_at;

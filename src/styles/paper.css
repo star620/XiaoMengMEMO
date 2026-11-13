@@ -2541,7 +2541,19 @@
 }
 
 /* ---------- 19.2 收起态 ---------- */
-/* 收起/展开的"高度"动画由 Rust 端逐帧改窗口尺寸完成（CSS 管不到原生窗口高度）；
+/* 尺寸切换：窗口一次性到位，内容用一下柔光遮住硬切（不缩放，避免文字重采样） */
+@keyframes xm-size-fade {
+  from { opacity: 0.55; }
+  to   { opacity: 1; }
+}
+.xm-note[data-resizing] .xm-note__paper {
+  animation: xm-size-fade 90ms cubic-bezier(.22,.61,.36,1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .xm-note[data-resizing] .xm-note__paper { animation: none; }
+}
+
+/* 收起/展开的高度由 Rust 端一次性提交（CSS 管不到原生窗口高度）；
    这里负责内容：正文和页脚淡出/淡入 + 略往上收，收起时窗口变矮才不会显得"内容被切掉"。 */
 .xm-note__body,
 .xm-note__foot {
