@@ -53,6 +53,12 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     '<button class="xm-seg__item" type="button" data-theme="day">浅色</button>' +
     '<button class="xm-seg__item" type="button" data-theme="night">深色</button>' +
     "</div></div>" +
+    '<div class="xm-row"><div class="xm-row__label">大小切换' +
+    "<small>直接跳最稳；柔光会先用纸色盖一下再揭开。</small></div>" +
+    '<div class="xm-seg" role="group" aria-label="大小切换" data-act="size-feel">' +
+    '<button class="xm-seg__item" type="button" data-feel="snap">直接跳</button>' +
+    '<button class="xm-seg__item" type="button" data-feel="veil">柔光</button>' +
+    "</div></div>" +
     "</section>" +
     '<section class="xm-settings__group">' +
     '<h3 class="xm-settings__group-title">新建便签</h3>' +
@@ -175,6 +181,15 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     return text.length > 28 ? text.slice(0, 28) + "…" : text;
   }
 
+  /** 尺寸切换观感：与便签窗口共用同一个 localStorage 键 */
+  function readSizeFeel(): "snap" | "veil" {
+    try {
+      return window.localStorage.getItem("xm.size-feel") === "veil" ? "veil" : "snap";
+    } catch {
+      return "snap";
+    }
+  }
+
   /** 把 current 的状态同步到界面 */
   function sync(): void {
     if (!current) return;
@@ -197,6 +212,13 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
       item.setAttribute("aria-pressed", active ? "true" : "false");
     });
     applyTheme(mode);
+
+    const feel = readSizeFeel();
+    body.querySelectorAll<HTMLElement>(".xm-seg__item[data-feel]").forEach((item) => {
+      const active = item.dataset.feel === feel;
+      item.dataset.active = active ? "1" : "0";
+      item.setAttribute("aria-pressed", active ? "true" : "false");
+    });
 
     body.querySelectorAll<HTMLElement>(".xm-color-dot").forEach((dot) => {
       dot.dataset.active = dot.dataset.color === current!.default_color ? "1" : "0";
@@ -416,6 +438,22 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     if (act === "reminder-sound") {
       // 老数据没这个字段时按默认开启算，点一下变成关闭
       void update({ reminder_sound: !(current?.reminder_sound !== false) });
+      return;
+    }
+
+    if (act === "size-feel") {
+      const item = (event.target as HTMLElement).closest<HTMLElement>(".xm-seg__item");
+      const feel = item?.dataset.feel;
+      if (feel === "snap" || feel === "veil") {
+        try {
+          window.localStorage.setItem("xm.size-feel", feel);
+        } catch {
+          toast("这个开关存不下来");
+          return;
+        }
+        sync();
+        toast(feel === "veil" ? "已切到柔光" : "已切到直接跳");
+      }
       return;
     }
 

@@ -185,6 +185,40 @@
   will-change: opacity;
 }
 
+/* ---------- 2.7 尺寸切换柔光 .xm-size-veil ----------
+   原生窗口尺寸是一步跳过去的（SetWindowPos 阻塞主线程 ~40-80ms），
+   任何"边动边变"的动画都会被这次阻塞吃掉，只剩跳变+重排。
+   所以不装作能动画，只在切换的那一小段把纸色盖上去：
+   盖上（40ms）→ 窗口提交 + 重排（被挡住）→ 揭开（90ms）。
+   盖上用纸色而不是白色/黑色，观感是"这张纸被重新铺了一次"，不是闪屏。
+   层级 5：压住文字与纸纹，仍低于弹层（6/7/24），菜单可以一直开着。 */
+.xm-size-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  border-radius: var(--xm-radius);
+  opacity: 0;
+  background: linear-gradient(
+    160deg,
+    var(--xm-paper-a) 0%,
+    var(--xm-paper-b) 38%,
+    var(--xm-paper-c) 74%,
+    var(--xm-paper-d) 100%
+  );
+  transition: opacity 70ms ease-out;
+}
+.xm-size-veil[data-on="1"] {
+  opacity: 1;
+  transition-duration: 30ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .xm-size-veil,
+  .xm-size-veil[data-on="1"] {
+    transition: none;
+  }
+}
+
 /* ==========================================================================
    3. 顶部：拖动条 / 标题 / 三个图标按钮
    ========================================================================== */
@@ -2541,16 +2575,16 @@
 }
 
 /* ---------- 19.2 收起态 ---------- */
-/* 尺寸切换：窗口一次性到位，内容用一下柔光遮住硬切（不缩放，避免文字重采样） */
-@keyframes xm-size-fade {
-  from { opacity: 0.55; }
-  to   { opacity: 1; }
-}
+/* 尺寸切换：不支持"在窗口跳动的同时做内容动画"——重排和窗口提交会互相踩。
+   这里只在切换窗口内禁用内容过渡，让布局一次到位，结束后恢复。 */
 .xm-note[data-resizing] .xm-note__paper {
-  animation: xm-size-fade 90ms cubic-bezier(.22,.61,.36,1);
+  /* 窗口提交与重排在同两帧内完成，此时任何纸面动画都会读成"闪" */
+  animation: none;
 }
-@media (prefers-reduced-motion: reduce) {
-  .xm-note[data-resizing] .xm-note__paper { animation: none; }
+.xm-note[data-resizing] .xm-note__body,
+.xm-note[data-resizing] .xm-note__foot,
+.xm-note[data-resizing] .xm-note__title {
+  transition: none;
 }
 
 /* 收起/展开的高度由 Rust 端一次性提交（CSS 管不到原生窗口高度）；

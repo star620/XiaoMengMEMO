@@ -204,6 +204,7 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     "</div></div>" +
     '<div class="xm-note__body">' + bodyHtml + "</div>" +
     '<div class="xm-note__foot"><span class="xm-note__meta"></span></div>' +
+    '<div class="xm-size-veil" aria-hidden="true"></div>' +
     popHint + menuPopHtml + duePopHtml +
     "</div>" +
     '<div class="xm-toast" data-show="0">已保存</div>' +
@@ -211,6 +212,22 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
 
   // ---------- 3. 常用节点 ----------
   const noteEl = query<HTMLElement>(root, ".xm-note");
+
+  /** 尺寸切换的观感：snap = 直接跳（默认，最稳）；veil = 先用纸色盖一下再揭开。
+      偏好存在 localStorage（各窗口同源共享），设置页里改。 */
+  function sizeFeelMode(): "snap" | "veil" {
+    try {
+      return window.localStorage.getItem("xm.size-feel") === "veil" ? "veil" : "snap";
+    } catch {
+      return "snap";
+    }
+  }
+  /** 等浏览器真正画过两帧：只等一帧时，style 变更可能被同一帧的窗口提交吞掉 */
+  function twoFrames(): Promise<void> {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+  }
 
   /** 尺寸切换只淡入，不缩放；连点共用一个清理定时器。 */
   function markResizing(): void {
@@ -226,6 +243,7 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     }, 100);
   }
   const paperEl = query<HTMLElement>(root, ".xm-note__paper");
+  const sizeVeilEl = query<HTMLElement>(root, ".xm-size-veil");
   const dragEl = query<HTMLElement>(root, ".xm-note__drag");
   const titleInput = query<HTMLInputElement>(root, ".xm-note__title");
   const panelBtn = query<HTMLButtonElement>(root, '[data-act="panel"]');
@@ -1774,19 +1792,23 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
         const previous = { width: draft.width, height: draft.height };
         draft.width = preset.width;
         draft.height = preset.height;
-        // 队列中已被后续点击取代的目标不再调用后端；运行中的提交由后端合并最新目标。
-        void queueWindowChange(() => {
-          if (request !== sizeRequest) return Promise.resolve(null);
-          markResizing();
-          return api.setNoteSize(draft.id, preset.width, preset.height);
-        })
-          .then((saved) => {
+        const useVeil = sizeFeelMode() === "veil";
+        if (useVeil) sizeVeilEl.dataset.on = "1";
+        void (async () => {
+          // 柔光模式下必须先让"盖住"真的画出来：否则窗口提交把这一帧一起吃掉了
+          if (useVeil) await twoFrames();
+          try {
+            // 队列中已被后续点击取代的目标不再调用后端；运行中的提交由后端合并最新目标。
+            const saved = await queueWindowChange(() => {
+              if (request !== sizeRequest) return Promise.resolve(null);
+              markResizing();
+              return api.setNoteSize(draft.id, preset.width, preset.height);
+            });
             if (!saved || request !== sizeRequest) return;
             draft.width = saved.width;
             draft.height = saved.height;
             draft.updated_at = saved.updated_at;
-          })
-          .catch((error) => {
+          } catch (error) {
             console.error("调整便签大小失败", error);
             if (request !== sizeRequest) return;
             draft.width = previous.width;
@@ -1794,7 +1816,14 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
             clearSizeIntent();
             updateSizeSeg();
             toast("大小没能改好，请再试一次");
-          });
+          } finally {
+            // 等新布局落定再揭开；期间又被点了一下就交给最新那次收尾
+            if (useVeil && request === sizeRequest) {
+              await twoFrames();
+              if (request === sizeRequest) delete sizeVeilEl.dataset.on;
+            }
+          }
+        })();
         // 高亮立刻跟手；实际宽度到位或 800ms 超时后自动回到实测值
         rememberSizeIntent(preset.key);
         scheduleScrollState();
