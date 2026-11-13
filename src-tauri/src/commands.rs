@@ -70,8 +70,11 @@ pub fn empty_trash(app: AppHandle) -> Result<usize, String> {
 #[tauri::command]
 pub async fn open_note_window(app: AppHandle, id: String) -> Result<(), String> {
     let store = app.state::<Store>();
-    let note = store.note(&id).ok_or_else(|| format!("便签不存在：{id}"))?;
-    windows::open_note_window(&app, &note, true)?;
+    if store.reopen_note_with(&id, |note| {
+        windows::open_note_window(&app, note, true).map(|_| ())
+    })? {
+        store.emit_notes_changed(&app);
+    }
     Ok(())
 }
 

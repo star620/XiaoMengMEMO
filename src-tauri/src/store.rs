@@ -780,6 +780,30 @@ impl Store {
         Ok(())
     }
 
+    /// 单条主动打开成功后恢复显示语义；原生打开失败时保留 hidden。
+    /// 原生窗口操作在 Store 锁外执行，避免建窗/窗口事件反向取锁。
+    pub fn reopen_note_with(
+        &self,
+        id: &str,
+        open: impl FnOnce(&Note) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let note = self.note(id).ok_or_else(|| format!("便签不存在：{id}"))?;
+        open(&note)?;
+        let mut state = self.lock();
+        let note = state
+            .notes
+            .iter_mut()
+            .find(|note| note.id == id)
+            .ok_or_else(|| format!("便签不存在：{id}"))?;
+        if !note.hidden {
+            return Ok(false);
+        }
+        note.hidden = false;
+        state.dirty = true;
+        self.persist_then_clean(&mut state)?;
+        Ok(true)
+    }
+
     // ---------- 窗口位置 ----------
 
     /// 窗口移动/缩放：只记内存，等定时线程或退出时统一写盘（避免频繁 IO）
@@ -1821,6 +1845,84 @@ mod tests {
             trash: Mutex::new(Vec::new()),
             trash_path: dir.join("trash.json"),
         }
+    }
+
+    #[test]
+    fn 单条打开成功清除隐藏且重启恢复仅该便签() {
+        let dir = temp_dir("reopen-hidden");
+        let store = test_store(&dir);
+        let mut note = Note::new(NoteKind::Memo, "yellow", 1.0, None);
+        note.hidden = true;
+        let mut other = Note::new(NoteKind::Memo, "pink", 1.0, None);
+        other.hidden = true;
+        {
+            let mut state = store.lock();
+            state.notes.extend([note.clone(), other.clone()]);
+            store.persist_then_clean(&mut state).expect("初始数据落盘");
+        }
+        let changed = store
+            .reopen_note_with(&note.id, |opened| {
+                // 与命令使用同一入口；替换的仅是原生建窗，且这里可以再次读取 Store。
+                assert_eq!(opened.id, note.id);
+                assert!(store.note(&note.id).expect("便签存在").hidden);
+                Ok(())
+            })
+            .expect("窗口打开成功");
+        assert!(changed);
+        assert!(!store.note(&note.id).expect("便签存在").hidden);
+        assert!(store.note(&other.id).expect("另一张便签存在").hidden);
+        assert_eq!(
+            store
+                .restore_notes()
+                .iter()
+                .map(|n| &n.id)
+                .collect::<Vec<_>>(),
+            vec![&note.id]
+        );
+        let (notes, _, fresh) = load_data(&store.notes_path, &store.bak_path);
+        assert!(!fresh);
+        assert!(
+            !notes
+                .iter()
+                .find(|n| n.id == note.id)
+                .expect("磁盘便签存在")
+                .hidden
+        );
+        assert!(
+            notes
+                .iter()
+                .find(|n| n.id == other.id)
+                .expect("另一张磁盘便签存在")
+                .hidden
+        );
+        assert!(!store
+            .reopen_note_with(&note.id, |_| Ok(()))
+            .expect("重复打开"));
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn 单条打开失败不清除隐藏也不改磁盘() {
+        let dir = temp_dir("reopen-failed");
+        let store = test_store(&dir);
+        let mut note = Note::new(NoteKind::Memo, "yellow", 1.0, None);
+        note.hidden = true;
+        {
+            let mut state = store.lock();
+            state.notes.push(note.clone());
+            store.persist_then_clean(&mut state).expect("初始数据落盘");
+        }
+        let before = fs::read(&store.notes_path).expect("读取初始文件");
+        assert_eq!(
+            store.reopen_note_with(&note.id, |_| Err("模拟原生打开失败".into())),
+            Err("模拟原生打开失败".into())
+        );
+        assert!(store.note(&note.id).expect("便签存在").hidden);
+        assert_eq!(before, fs::read(&store.notes_path).expect("读取失败后文件"));
+        assert!(store
+            .reopen_note_with("missing", |_| panic!("不存在的便签不应尝试建窗"))
+            .is_err());
+        fs::remove_dir_all(dir).ok();
     }
 
     #[test]
