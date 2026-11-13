@@ -473,13 +473,91 @@ struct SizeTween {
     started: Instant,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SizeRect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SizeGeometry {
+    scale: f64,
+    rect: SizeRect,
+}
+
+impl SizeGeometry {
+    fn rect_for(&self, goal: SizeGoal) -> SizeRect {
+        let width = (goal.width * self.scale).round() as i32;
+        SizeRect {
+            x: self.rect.x + self.rect.width - width,
+            y: self.rect.y,
+            width,
+            height: (goal.height * self.scale).round() as i32,
+        }
+    }
+
+    fn logical_size(&self, rect: SizeRect) -> SizeGoal {
+        SizeGoal {
+            width: rect.width as f64 / self.scale,
+            height: rect.height as f64 / self.scale,
+        }
+    }
+}
+
+/// 仅在驱动开始和结束校验时调用；便签为无边框窗口，outer rect 即窗口目标。
+fn read_size_geometry(window: &WebviewWindow) -> Result<SizeGeometry, String> {
+    let scale = window.scale_factor().map_err(|err| err.to_string())?;
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err("窗口缩放比例无效".to_string());
+    }
+    let size = window.outer_size().map_err(|err| err.to_string())?;
+    let position = window.outer_position().map_err(|err| err.to_string())?;
+    Ok(SizeGeometry {
+        scale,
+        rect: SizeRect {
+            x: position.x,
+            y: position.y,
+            width: size.width as i32,
+            height: size.height as i32,
+        },
+    })
+}
+
+struct SizeWindow {
+    #[cfg(windows)]
+    hwnd: isize,
+    #[cfg(not(windows))]
+    window: WebviewWindow,
+}
+
+struct SizeMotion {
+    tween: Option<SizeTween>,
+    last_rect: SizeRect,
+    target_rect: SizeRect,
+}
+
+impl SizeWindow {
+    fn new(window: &WebviewWindow) -> Result<Self, String> {
+        #[cfg(windows)]
+        {
+            Ok(Self {
+                hwnd: window.hwnd().map_err(|err| err.to_string())?.0 as isize,
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(Self {
+                window: window.clone(),
+            })
+        }
+    }
+}
+
 /// 帧内分段只在内存记录，结束后统一写日志，避免日志 IO 污染单步测量。
 #[derive(Debug, Default)]
 struct SizeStepTiming {
-    size_us: u128,
-    position_us: u128,
-    outer_us: u128,
-    scale_us: u128,
     set_rect_us: u128,
     total_us: u128,
 }
@@ -519,22 +597,19 @@ fn system_animations_enabled() -> bool {
 /// 用一次 Win32 SetWindowPos 原子地完成「移动 + 改尺寸」。
 /// 返回 false 表示系统调用失败，调用方应结束动画。
 #[cfg(windows)]
-fn set_window_rect(window: &WebviewWindow, x: i32, y: i32, cx: i32, cy: i32) -> bool {
+fn set_window_rect(window: &SizeWindow, rect: SizeRect) -> bool {
     // SWP_NOZORDER：不动 z 序（置顶由 always_on_top 管，别在这里改）
     // SWP_NOACTIVATE：不抢焦点，用户正在别处打字时不能被尺寸动画打断
     const SWP_NOZORDER: u32 = 0x0004;
     const SWP_NOACTIVATE: u32 = 0x0010;
-    let Ok(hwnd) = window.hwnd() else {
-        return false;
-    };
     let ok = unsafe {
         SetWindowPos(
-            hwnd.0 as isize,
+            window.hwnd,
             0,
-            x,
-            y,
-            cx,
-            cy,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
             SWP_NOZORDER | SWP_NOACTIVATE,
         )
     };
@@ -557,69 +632,51 @@ unsafe extern "system" {
 
 /// 非 Windows 平台（只用于开发调试）退化成两次原生调用
 #[cfg(not(windows))]
-fn set_window_rect(window: &WebviewWindow, x: i32, y: i32, cx: i32, cy: i32) -> bool {
-    let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
+fn set_window_rect(window: &SizeWindow, rect: SizeRect) -> bool {
     let size_ok = window
-        .set_size(tauri::LogicalSize::new(
-            cx as f64 / scale,
-            cy as f64 / scale,
+        .window
+        .set_size(tauri::PhysicalSize::new(
+            rect.width as u32,
+            rect.height as u32,
         ))
         .is_ok();
     let pos_ok = window
-        .set_position(tauri::LogicalPosition::new(
-            x as f64 / scale,
-            y as f64 / scale,
-        ))
+        .window
+        .set_position(tauri::PhysicalPosition::new(rect.x, rect.y))
         .is_ok();
     size_ok && pos_ok
 }
 
 /// 朝目标走一帧；返回 true 表示已经精确到达。
-/// 每帧都重新读窗口当前位置/尺寸，所以用户中途拖动窗口时会以当前右上角为准。
+/// 几何和句柄来自启动快照；运行期只算插值，最多提交一次物理矩形。
 fn animate_step(
-    window: &WebviewWindow,
+    window: &SizeWindow,
+    geometry: &SizeGeometry,
     goal: SizeGoal,
-    tween: &mut Option<SizeTween>,
+    motion: &mut SizeMotion,
     duration: Duration,
     timing: &mut SizeStepTiming,
 ) -> Result<bool, String> {
-    let stage = Instant::now();
-    let size = window.inner_size().map_err(|err| err.to_string())?;
-    timing.size_us = stage.elapsed().as_micros();
-    let stage = Instant::now();
-    let position = window.outer_position().map_err(|err| err.to_string())?;
-    timing.position_us = stage.elapsed().as_micros();
-    let stage = Instant::now();
-    let outer = window.outer_size().map_err(|err| err.to_string())?;
-    timing.outer_us = stage.elapsed().as_micros();
-    let stage = Instant::now();
-    let scale = window.scale_factor().map_err(|err| err.to_string())?;
-    timing.scale_us = stage.elapsed().as_micros();
-    if !scale.is_finite() || scale <= 0.0 {
-        return Err("窗口缩放比例无效".to_string());
-    }
-    // 目标变化时从当前真实尺寸重新起步，不从上一段动画的起点跳回去。
-    if tween.as_ref().map(|motion| motion.to) != Some(goal) {
-        *tween = Some(SizeTween {
-            from: SizeGoal {
-                width: size.width as f64 / scale,
-                height: size.height as f64 / scale,
-            },
+    // 新目标从最后成功提交的物理尺寸接续，不重新向系统同步查询。
+    if motion.tween.as_ref().map(|tween| tween.to) != Some(goal) {
+        motion.target_rect = geometry.rect_for(goal);
+        motion.tween = Some(SizeTween {
+            from: geometry.logical_size(motion.last_rect),
             to: goal,
             started: Instant::now(),
         });
     }
-    let motion = tween.as_ref().expect("尺寸轨迹已初始化");
-    let next = sample_size(motion.from, motion.to, motion.started.elapsed(), duration);
-    let cx = (next.width * scale).round() as i32;
-    let cy = (next.height * scale).round() as i32;
-    // 右上角锚点：右边缘在物理像素里固定，宽度变了只把 x 往回推
-    let right = position.x + outer.width as i32;
-    let x = right - cx;
-    let y = position.y;
-    if size.width as i32 != cx || size.height as i32 != cy {
+    let tween = motion.tween.as_ref().expect("尺寸轨迹已初始化");
+    let elapsed = tween.started.elapsed();
+    let done = elapsed >= duration || tween.from == tween.to;
+    let next = if done {
+        motion.target_rect
+    } else {
+        geometry.rect_for(sample_size(tween.from, tween.to, elapsed, duration))
+    };
+    if next != motion.last_rect {
         let stage = Instant::now();
-        let ok = set_window_rect(window, x, y, cx, cy);
+        let ok = set_window_rect(window, next);
         timing.set_rect_us = stage.elapsed().as_micros();
         if !ok {
             return Err(format!(
@@ -627,10 +684,10 @@ fn animate_step(
                 std::io::Error::last_os_error()
             ));
         }
+        motion.last_rect = next;
     }
-    let target_cx = (goal.width * scale).round();
-    let target_cy = (goal.height * scale).round();
-    Ok((cx as f64 - target_cx).abs() < 1.0 && (cy as f64 - target_cy).abs() < 1.0)
+    // 不因像素取整提前结束，完整走到目标时长；减少动效仍可立即到位。
+    Ok(done)
 }
 
 /// 把窗口尺寸驱动到指定逻辑大小（宽、高）。
@@ -665,7 +722,20 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
     let window = window.clone();
     std::thread::spawn(move || {
         let started = Instant::now();
-        let mut tween = None;
+        let prepared = read_size_geometry(&window)
+            .and_then(|geometry| SizeWindow::new(&window).map(|native| (geometry, native)));
+        let setup_us = started.elapsed().as_micros();
+        let initial_rect = prepared.as_ref().map(|(g, _)| g.rect).unwrap_or(SizeRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        });
+        let mut motion = SizeMotion {
+            tween: None,
+            last_rect: initial_rect,
+            target_rect: initial_rect,
+        };
         let mut frames = 0;
         let mut max_step = Duration::ZERO;
         let mut timings = Vec::with_capacity(16);
@@ -679,13 +749,30 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
                 }
             };
             let mut timing = SizeStepTiming::default();
-            let result = animate_step(&window, goal, &mut tween, duration, &mut timing);
+            let result = prepared
+                .as_ref()
+                .map_err(Clone::clone)
+                .and_then(|(geometry, native)| {
+                    animate_step(native, geometry, goal, &mut motion, duration, &mut timing)
+                });
             frames += 1;
             max_step = max_step.max(frame_started.elapsed());
             timing.total_us = frame_started.elapsed().as_micros();
             timings.push(timing);
             if matches!(result, Ok(false)) {
-                std::thread::sleep(SIZE_FRAME.saturating_sub(frame_started.elapsed()));
+                let remaining = duration.saturating_sub(
+                    motion
+                        .tween
+                        .as_ref()
+                        .expect("尺寸轨迹存在")
+                        .started
+                        .elapsed(),
+                );
+                std::thread::sleep(
+                    SIZE_FRAME
+                        .saturating_sub(frame_started.elapsed())
+                        .min(remaining),
+                );
                 continue;
             }
             let mut states = size_states().lock().unwrap_or_else(|p| p.into_inner());
@@ -703,17 +790,41 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
             if let Err(err) = &result {
                 log_line(format!("尺寸动画失败（{label}）：{err}"));
             }
+            let motion_ms = motion
+                .tween
+                .as_ref()
+                .map(|motion| motion.started.elapsed().as_millis())
+                .unwrap_or(0);
+            let verify_started = Instant::now();
+            let final_geometry = read_size_geometry(&window);
+            let final_read_us = verify_started.elapsed().as_micros();
+            let final_match = final_geometry
+                .as_ref()
+                .map(|g| g.rect == motion.target_rect)
+                .unwrap_or(false);
             let app = window.app_handle();
-            if let Some(store) = app.try_state::<Store>() {
-                let webview: &tauri::Webview = window.as_ref();
-                capture_geometry(&webview.window(), &store);
+            if let (Some(store), Ok(geometry), Some(id)) = (
+                app.try_state::<Store>(),
+                &final_geometry,
+                note_id_from_label(&label),
+            ) {
+                store.update_window_geometry(
+                    id,
+                    WindowState {
+                        x: geometry.rect.x as f64 / geometry.scale,
+                        y: geometry.rect.y as f64 / geometry.scale,
+                        width: geometry.rect.width as f64 / geometry.scale,
+                        height: geometry.rect.height as f64 / geometry.scale,
+                    },
+                );
             }
             // 每次动画只汇总一条，避免逐帧日志的磁盘 IO 干扰测量。
             crate::boot_log(&format!(
-                "size_animation {label}: goal={goal:?} elapsed_ms={} steps={frames} max_step_us={} ok={} timings={timings:?}",
+                "size_animation {label}: goal={goal:?} elapsed_ms={} steps={frames} max_step_us={} ok={} driver=cached_geometry setup_us={setup_us} motion_ms={motion_ms} final_read_us={final_read_us} final_match={final_match} target_rect={:?} final_geometry={final_geometry:?} timings={timings:?}",
                 started.elapsed().as_millis(),
                 max_step.as_micros(),
-                result.is_ok()
+                result.is_ok(),
+                motion.target_rect
             ));
             break;
         }
@@ -1397,6 +1508,97 @@ mod tests {
             w: 1440.0,
             h: 900.0,
         }
+    }
+
+    #[test]
+    fn 缓存几何在负坐标和非整数缩放下保持右上角() {
+        let geometry = SizeGeometry {
+            scale: 1.25,
+            rect: SizeRect {
+                x: -1600,
+                y: 50,
+                width: 400,
+                height: 475,
+            },
+        };
+        let from = geometry.logical_size(geometry.rect);
+        let goal = SizeGoal {
+            width: 400.0,
+            height: 500.0,
+        };
+        for millis in 0..=160 {
+            let rect = geometry.rect_for(sample_size(
+                from,
+                goal,
+                Duration::from_millis(millis),
+                SIZE_DURATION,
+            ));
+            assert_eq!(rect.x + rect.width, -1200);
+            assert_eq!(rect.y, 50);
+        }
+        assert_eq!(
+            geometry.rect_for(goal),
+            SizeRect {
+                x: -1700,
+                y: 50,
+                width: 500,
+                height: 625
+            }
+        );
+    }
+
+    #[test]
+    fn 缓存已提交帧换目标不会退回启动尺寸() {
+        let geometry = SizeGeometry {
+            scale: 1.5,
+            rect: SizeRect {
+                x: 120,
+                y: 240,
+                width: 480,
+                height: 570,
+            },
+        };
+        let first = SizeGoal {
+            width: 400.0,
+            height: 500.0,
+        };
+        let submitted = geometry.rect_for(sample_size(
+            geometry.logical_size(geometry.rect),
+            first,
+            Duration::from_millis(48),
+            SIZE_DURATION,
+        ));
+        let next = SizeGoal {
+            width: 280.0,
+            height: 330.0,
+        };
+        assert_eq!(
+            geometry.rect_for(sample_size(
+                geometry.logical_size(submitted),
+                next,
+                Duration::ZERO,
+                SIZE_DURATION
+            )),
+            submitted
+        );
+        assert_eq!(
+            geometry.rect_for(sample_size(
+                geometry.logical_size(submitted),
+                next,
+                SIZE_DURATION,
+                SIZE_DURATION
+            )),
+            geometry.rect_for(next)
+        );
+        assert_eq!(
+            geometry.rect_for(sample_size(
+                geometry.logical_size(submitted),
+                next,
+                Duration::ZERO,
+                Duration::ZERO
+            )),
+            geometry.rect_for(next)
+        );
     }
 
     #[test]
