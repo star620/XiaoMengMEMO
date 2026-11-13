@@ -109,6 +109,19 @@ pub async fn set_note_collapsed(
 ) -> Result<Note, String> {
     let store = app.state::<Store>();
     let window = app.get_webview_window(&windows::note_label(&id));
+    // 固定画布原型：窗口不动，只改数据并把可见区域重裁到新纸高；
+    // 纸的高度由前端用 CSS 过渡去变，不需要任何原生尺寸提交。
+    if windows::fixed_canvas() {
+        let note = store.set_collapsed(&app, &id, collapsed, None)?;
+        if let Some(window) = &window {
+            windows::apply_note_region(
+                window,
+                windows::paper_width(&note),
+                windows::paper_height(&note),
+            );
+        }
+        return Ok(note);
+    }
     let change = window
         .as_ref()
         .map(|window| windows::begin_size_change(window.label()));
@@ -162,6 +175,40 @@ pub async fn set_note_size(
         windows::apply_size(&window, width, visible_height);
     }
     Ok(note)
+}
+
+/// 固定画布原型：换档只改数据 + 重裁窗口可见区域，窗口本身不动。
+#[tauri::command]
+pub async fn set_note_canvas_region(
+    app: AppHandle,
+    id: String,
+    width: f64,
+    height: f64,
+) -> Result<Note, String> {
+    let store = app.state::<Store>();
+    let note = store.set_note_size(&app, &id, width, height)?;
+    if let Some(window) = app.get_webview_window(&windows::note_label(&id)) {
+        windows::apply_note_region(
+            &window,
+            windows::paper_width(&note),
+            windows::paper_height(&note),
+        );
+    }
+    Ok(note)
+}
+
+/// 固定画布原型：动画开始前把可见区域放开到整块画布。
+/// 纸在 180ms 里变宽/变窄，旧裁剪框会把它切掉一截，所以动画期间先不裁。
+#[tauri::command]
+pub async fn release_note_region(app: AppHandle, id: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(&windows::note_label(&id)) {
+        windows::apply_note_region(
+            &window,
+            windows::CANVAS_PAPER_W,
+            windows::CANVAS_PAPER_H,
+        );
+    }
+    Ok(())
 }
 
 /// 锁定 / 解锁便签：数据落库（正文保护在 store::save_note 里做）

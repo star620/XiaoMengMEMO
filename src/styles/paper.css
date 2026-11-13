@@ -4777,4 +4777,36 @@ mark.xm-hit {
   color: var(--xm-ink-strong, var(--xm-ink));
 }
 
+/* ==========================================================================
+   §28 固定画布原型（?canvas=fixed -> 根节点 data-canvas="fixed"）
+   --------------------------------------------------------------------------
+   窗口按最大档 400x500 + 10px 余量创建，之后不再变；换档和折叠都只改
+   --xm-paper-w / --xm-paper-h 两个变量，纸在窗口里用 CSS 过渡自己变大变小，
+   全程不经过任何原生尺寸提交，所以不会被 SetWindowPos 拖成 30fps。
+   纸靠窗口右上角，四周空白由 Rust 用 SetWindowRgn 裁掉、点击穿透回桌面。
+   ========================================================================== */
+.xm-note[data-canvas="fixed"] {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  width: var(--xm-paper-w, 320px);
+  height: var(--xm-paper-h, 380px);
+  padding: 0;
+  transition:
+    width 180ms cubic-bezier(0.22, 0.8, 0.28, 1),
+    height 180ms cubic-bezier(0.22, 0.8, 0.28, 1);
+}
+
+/* 纸在过渡期间会短暂超出旧裁剪框：Rust 会先把可见区域放开再收紧，
+   这里让纸的入场动画只在首次挂载时跑，不要在每次换档时重放 */
+.xm-note[data-canvas="fixed"][data-resizing] .xm-note__paper {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xm-note[data-canvas="fixed"] {
+    transition: none;
+  }
+}
+
 

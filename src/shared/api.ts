@@ -107,6 +107,11 @@ export const api = {
   /** 三档尺寸（紧凑 / 标准 / 大）：后端改窗口大小并记住 */
   setNoteSize: (id: string, width: number, height: number) =>
     call<Note>("set_note_size", { id, width, height }),
+  /** 固定画布原型：换档只改纸的数据 + 收紧窗口可见区域，窗口本身不动 */
+  setNoteCanvasRegion: (id: string, width: number, height: number) =>
+    call<Note>("set_note_canvas_region", { id, width, height }),
+  /** 固定画布原型：动画期间把可见区域放回整块画布，纸才不会被旧裁剪框切掉 */
+  releaseNoteRegion: (id: string) => call<void>("release_note_region", { id }),
   /** 锁定 / 解锁便签：锁上后正文只读，后端也会守住内容不被旧快照覆盖（契约 §13.3） */
   setNoteLocked: (id: string, locked: boolean) => call<Note>("set_note_locked", { id, locked }),
   /** 导出全部便签到桌面，返回导出目录（契约 §13.1） */

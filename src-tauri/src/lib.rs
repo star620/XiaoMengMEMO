@@ -386,6 +386,8 @@ pub fn run() {
             commands::set_pinned,
             commands::set_note_collapsed,
             commands::set_note_size,
+            commands::set_note_canvas_region,
+            commands::release_note_region,
             commands::set_note_locked,
             commands::export_notes,
             commands::restore_from_backup,

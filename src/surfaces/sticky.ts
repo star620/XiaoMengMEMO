@@ -45,6 +45,19 @@ const SIZE_PRESETS: { key: string; label: string; width: number; height: number 
   { key: "large", label: "大", width: 400, height: 500 },
 ];
 
+/**
+ * 固定画布原型（Rust 侧 XM_CANVAS=fixed 时，便签 URL 会带 canvas=fixed）：
+ * 窗口一律按最大档 400x500 + 余量创建，之后不再改；换档/折叠只让「纸」在窗口里
+ * 用 CSS 过渡改宽高。这样换档完全不经过原生尺寸提交，才有机会跑满 60fps。
+ */
+const CANVAS_FIXED = new URLSearchParams(location.search).get("canvas") === "fixed";
+/** 纸的宽高过渡时长（CSS 里写的 180ms），留一点余量再收紧窗口可见区域 */
+const CANVAS_SETTLE_MS = 240;
+/** 和 Rust windows.rs 的 CANVAS_PAD 一致：纸离画布上边和右边各 10px */
+const CANVAS_PAD = 10;
+/** 和 Rust windows.rs 的 COLLAPSED_HEIGHT 一致 */
+const PAPER_COLLAPSED_HEIGHT = 64;
+
 /** 重复提醒选项：空串 = 不重复（契约 §12.1） */
 const REPEATS: { value: string; label: string }[] = [
   { value: "", label: "不重复" },
@@ -389,6 +402,10 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     noteEl.style.setProperty("--xm-font-scale", String(draft.font_scale || 1));
     updatePinButton();
     noteEl.dataset.collapsed = draft.collapsed ? "1" : "0";
+    if (CANVAS_FIXED) {
+      noteEl.dataset.canvas = "fixed";
+      applyPaperSize();
+    }
     updateMenuItems();
     remindBtn.dataset.active = draft.reminder_at && !draft.reminder_done ? "1" : "0";
     if (titleInput.value !== draft.title) titleInput.value = draft.title;
@@ -941,6 +958,62 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     }
   }
 
+  /** 固定画布：纸的宽高走 CSS 变量，换档和折叠都是纸自己在动，窗口一动不动 */
+  function applyPaperSize(): void {
+    if (!CANVAS_FIXED) return;
+    const width = draft.width || 320;
+    const height = draft.collapsed ? PAPER_COLLAPSED_HEIGHT : draft.height || 380;
+    noteEl.style.setProperty("--xm-paper-w", width + "px");
+    noteEl.style.setProperty("--xm-paper-h", height + "px");
+  }
+
+  /**
+   * 固定画布换档：
+   *   ① 先放开可见区域（否则旧裁剪框会把正在变宽/变窄的纸切掉）
+   *   ② 改 CSS 变量，纸在 180ms 里过渡到新档
+   *   ③ 过渡走完再落库 + 收紧可见区域
+   * 全程没有一次窗口尺寸提交，所以不会有 SetWindowPos 那种 30–45ms 的卡顿。
+   */
+  function selectPaperSize(preset: { key: string; label: string; width: number; height: number }): void {
+    const request = ++sizeRequest;
+    const previous = { width: draft.width, height: draft.height };
+    draft.width = preset.width;
+    draft.height = preset.height;
+    rememberSizeIntent(preset.key);
+    void (async () => {
+      try {
+        await api.releaseNoteRegion(draft.id);
+      } catch (error) {
+        console.error("放开窗口可见区域失败", error);
+      }
+      if (request !== sizeRequest) return;
+      noteEl.style.setProperty("--xm-paper-w", preset.width + "px");
+      noteEl.style.setProperty(
+        "--xm-paper-h",
+        String(draft.collapsed ? PAPER_COLLAPSED_HEIGHT : preset.height) + "px"
+      );
+      scheduleScrollState();
+      await wait(CANVAS_SETTLE_MS);
+      if (request !== sizeRequest) return;
+      try {
+        const saved = await api.setNoteCanvasRegion(draft.id, preset.width, preset.height);
+        draft.width = saved.width;
+        draft.height = saved.height;
+        draft.updated_at = saved.updated_at;
+      } catch (error) {
+        console.error("调整便签大小失败", error);
+        if (request !== sizeRequest) return;
+        draft.width = previous.width;
+        draft.height = previous.height;
+        noteEl.style.setProperty("--xm-paper-w", previous.width + "px");
+        noteEl.style.setProperty("--xm-paper-h", previous.height + "px");
+        clearSizeIntent();
+        updateSizeSeg();
+        toast("大小没能改好，请再试一次");
+      }
+    })();
+  }
+
   function updateColorDots(): void {
     menuPop.querySelectorAll<HTMLElement>(".xm-color-dot").forEach((dot) => {
       dot.dataset.active = dot.dataset.color === draft.color ? "1" : "0";
@@ -964,7 +1037,10 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     if (sizeIntent) {
       best = sizeIntent;
     } else {
-      const current = Math.round(window.innerWidth || draft.width || 320);
+      // 固定画布下窗口宽度永远是画布宽，纸的实际宽度要问草稿
+      const current = Math.round(
+        (CANVAS_FIXED ? draft.width : window.innerWidth) || draft.width || 320
+      );
       let bestGap = Number.POSITIVE_INFINITY;
       for (const preset of SIZE_PRESETS) {
         const gap = Math.abs(preset.width - current);
@@ -1005,6 +1081,12 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
   /** resize 时检查 intent 是否已经达成；达成/超时就交还给实际宽度 */
   function syncSizeIntent(): void {
     if (sizeIntent) {
+      if (CANVAS_FIXED) {
+        // 固定画布：窗口不会 resize，纸的过渡 180ms 走完就算到位
+        if (Date.now() - sizeIntentAt > 300) clearSizeIntent();
+        updateSizeSeg();
+        return;
+      }
       const preset = SIZE_PRESETS.find((item) => item.key === sizeIntent);
       const width = Math.round(window.innerWidth || 0);
       const reached = preset ? Math.abs(preset.width - width) < 30 : true;
@@ -1072,8 +1154,37 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     const previous = draft.collapsed;
     closePopover();
     draft.collapsed = next;
-    noteEl.dataset.collapsed = next ? "1" : "0";
     updateMenuItems();
+
+    if (CANVAS_FIXED) {
+      // 固定画布：窗口不动，纸高在 180ms 里过渡；先放开裁剪框，走完再落库并收紧
+      try {
+        await api.releaseNoteRegion(draft.id);
+        if (request !== collapseRequest) return;
+        noteEl.dataset.collapsed = next ? "1" : "0";
+        applyPaperSize();
+        scheduleScrollState();
+        await wait(CANVAS_SETTLE_MS);
+        if (request !== collapseRequest) return;
+        const saved = await api.setNoteCollapsed(draft.id, next);
+        if (request !== collapseRequest) return;
+        draft.collapsed = saved.collapsed;
+        draft.updated_at = saved.updated_at;
+        noteEl.dataset.collapsed = saved.collapsed ? "1" : "0";
+        applyPaperSize();
+        scheduleScrollState();
+      } catch (error) {
+        console.error("收起便签失败", error);
+        if (request !== collapseRequest) return;
+        draft.collapsed = previous;
+        noteEl.dataset.collapsed = previous ? "1" : "0";
+        applyPaperSize();
+        toast("收起失败");
+      }
+      return;
+    }
+
+    noteEl.dataset.collapsed = next ? "1" : "0";
     try {
       const saved = await queueWindowChange(() => {
         if (request !== collapseRequest) return Promise.resolve(null);
@@ -1795,6 +1906,10 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     if (sizeItem?.dataset.size) {
       const preset = SIZE_PRESETS.find((p) => p.key === sizeItem.dataset.size);
       if (preset) {
+        if (CANVAS_FIXED) {
+          selectPaperSize(preset);
+          return;
+        }
         const request = ++sizeRequest;
         const previous = { width: draft.width, height: draft.height };
         draft.width = preset.width;
@@ -1936,8 +2051,18 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     // 收起态窗口只有 64px 高，这是折叠形态、不是便签该记住的高度：
     // 存下去的话展开时会按 64 还原，便签就卡成一条矮条。收起期间不写位置/尺寸。
     if (draft.collapsed) return;
+    // 固定画布：state 是整块画布（420x520）的矩形，而我们要记的是「纸」的矩形。
+    // 直接把窗口矩形存回去，下次打开就会把画布当纸，位置每轮平移 10px。
+    const payload = CANVAS_FIXED
+      ? {
+          x: state.x + state.width - CANVAS_PAD - (draft.width || 320),
+          y: state.y + CANVAS_PAD,
+          width: draft.width || 320,
+          height: draft.height || 380,
+        }
+      : state;
     // 动画期间宽高是否可写由后端状态决定，不用固定毫秒数猜动画是否结束。
-    void api.saveWindowState(draft.id, state);
+    void api.saveWindowState(draft.id, payload);
   });
 
   // 关闭窗口前确保内容落库（Tauri 会先拦下 close，存完再关）

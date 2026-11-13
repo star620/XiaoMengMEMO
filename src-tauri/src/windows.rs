@@ -27,6 +27,37 @@ pub const COLLAPSED_HEIGHT: f64 = 64.0;
 /// 便签窗口自身允许的最小高度：比 MIN_HEIGHT 小，否则怎么也压不到 64px
 const MIN_NOTE_HEIGHT: f64 = 56.0;
 
+// ---------- 固定画布原型（分支 xm/fixed-canvas） ----------
+//
+// 现状（window 模式）：窗口尺寸 = 纸的大小，换档要走一次同步 SetWindowPos，
+// 一次 30–45ms，60fps 预算只有 16.7ms，所以尺寸永远动画不起来。
+//
+// 固定画布（fixed 模式）：窗口一律按「最大档 400×500 + 旋转/投影余量」创建，
+// 纸在窗口里用 CSS 宽高动画伸缩；窗口四周的空白用 SetWindowRgn 裁掉，点击穿透回桌面。
+// 这样换档完全不碰 Win32，动画交给合成器。
+//
+// 用环境变量 XM_CANVAS=window 可以退回旧行为（A/B 对比用）。
+const CANVAS_DEFAULT: &str = "fixed";
+/// 纸与窗口边之间留的余量：给纸的轻微旋转和外投影留地方（逻辑像素）
+pub const CANVAS_PAD: f64 = 10.0;
+/// 最大档纸面尺寸，和前端 SIZE_PRESETS 的 large 一致
+pub const CANVAS_PAPER_W: f64 = 400.0;
+pub const CANVAS_PAPER_H: f64 = 500.0;
+/// 固定画布模式的窗口尺寸（逻辑像素）
+pub const CANVAS_WIDTH: f64 = CANVAS_PAPER_W + CANVAS_PAD * 2.0;
+pub const CANVAS_HEIGHT: f64 = CANVAS_PAPER_H + CANVAS_PAD * 2.0;
+/// 裁剪区域比纸再外扩一点，让投影不被切掉（逻辑像素）
+const REGION_MARGIN: f64 = 8.0;
+
+/// 当前是否启用固定画布（默认 fixed；XM_CANVAS=window 可退回）
+pub fn fixed_canvas() -> bool {
+    static FIXED: OnceLock<bool> = OnceLock::new();
+    *FIXED.get_or_init(|| {
+        let value = std::env::var("XM_CANVAS").unwrap_or_else(|_| CANVAS_DEFAULT.to_string());
+        !value.eq_ignore_ascii_case("window")
+    })
+}
+
 pub const PANEL_LABEL: &str = "panel";
 pub const SETTINGS_LABEL: &str = "settings";
 pub const REMINDER_LABEL: &str = "reminder";
@@ -269,12 +300,23 @@ fn note_geometry(app: &AppHandle, note: &Note) -> (f64, f64, f64, f64) {
 
     let max_x = target.x + (target.w - width).max(0.0);
     let max_y = target.y + (target.h - height).max(0.0);
-    (
-        x.clamp(target.x, max_x),
-        y.clamp(target.y, max_y),
-        width,
-        height,
-    )
+    // 先把「纸」夹进屏幕：固定画布下纸比窗口小，纸不能跑到屏幕外
+    let paper_x = x.clamp(target.x, max_x);
+    let paper_y = y.clamp(target.y, max_y);
+
+    if fixed_canvas() {
+        // 纸靠窗口右上角摆放（和窗口模式「右边缘不动、向左变宽」的手感一致），
+        // 所以把纸的位置换算成窗口的位置：窗口右边 = 纸右边 + 留白，窗口上边 = 纸上边 - 留白
+        let mut win_x = paper_x + width + CANVAS_PAD - CANVAS_WIDTH;
+        let mut win_y = paper_y - CANVAS_PAD;
+        let max_win_x = target.x + (target.w - CANVAS_WIDTH).max(0.0);
+        let max_win_y = target.y + (target.h - CANVAS_HEIGHT).max(0.0);
+        win_x = win_x.clamp(target.x, max_win_x);
+        win_y = win_y.clamp(target.y, max_win_y);
+        return (win_x, win_y, CANVAS_WIDTH, CANVAS_HEIGHT);
+    }
+
+    (paper_x, paper_y, width, height)
 }
 
 /// 把已存在但可能被最小化 / 隐藏的窗口重新露出来：
@@ -380,6 +422,99 @@ fn force_repaint(window: &WebviewWindow) {
     let height = size.height as f64 / scale;
     let _ = window.set_size(tauri::LogicalSize::new(width, height + 1.0));
     let _ = window.set_size(tauri::LogicalSize::new(width, height));
+}
+
+/// 纸的宽度（逻辑像素）：和 note_geometry 用同一套兜底
+pub fn paper_width(note: &Note) -> f64 {
+    note.width
+        .filter(|value| value.is_finite())
+        .unwrap_or(DEFAULT_WIDTH)
+        .max(MIN_WIDTH)
+}
+
+/// 纸的可见高度：折叠时是收起高度
+pub fn paper_height(note: &Note) -> f64 {
+    if note.collapsed {
+        COLLAPSED_HEIGHT
+    } else {
+        note.height
+            .filter(|value| value.is_finite())
+            .unwrap_or(DEFAULT_HEIGHT)
+            .max(MIN_HEIGHT)
+    }
+}
+
+/// 固定画布原型：把窗口裁剪成「纸 + 一点投影余量」，窗口四周的空白点击穿透回桌面。
+/// 纸在窗口里靠右上角，宽度/高度一变就得重裁一次。
+#[cfg(windows)]
+pub fn apply_note_region(window: &WebviewWindow, paper_w: f64, paper_h: f64) {
+    if !fixed_canvas() {
+        return;
+    }
+    let Ok(scale) = window.scale_factor() else {
+        return;
+    };
+    if !scale.is_finite() || scale <= 0.0 {
+        return;
+    }
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    let paper_w = paper_w.clamp(MIN_WIDTH, CANVAS_PAPER_W.max(MIN_WIDTH));
+    let paper_h = paper_h.clamp(MIN_NOTE_HEIGHT, CANVAS_PAPER_H.max(MIN_NOTE_HEIGHT));
+    let left = (CANVAS_WIDTH - CANVAS_PAD - paper_w - REGION_MARGIN) * scale;
+    let top = (CANVAS_PAD - REGION_MARGIN) * scale;
+    let right = left + (paper_w + REGION_MARGIN * 2.0) * scale;
+    let bottom = top + (paper_h + REGION_MARGIN * 2.0) * scale;
+    let left = left.max(0.0).round() as i32;
+    let top = top.max(0.0).round() as i32;
+    let right = right.min((CANVAS_WIDTH * scale).round()).round() as i32;
+    let bottom = bottom.min((CANVAS_HEIGHT * scale).round()).round() as i32;
+    if right <= left || bottom <= top {
+        return;
+    }
+    log_line(format!(
+        "region apply label={} paper={}x{} rect={},{} {}x{}",
+        window.label(),
+        paper_w,
+        paper_h,
+        left,
+        top,
+        right - left,
+        bottom - top
+    ));
+    unsafe {
+        let region = CreateRectRgn(left, top, right, bottom);
+        if region == 0 {
+            log_line("创建窗口裁剪区域失败".to_string());
+            return;
+        }
+        // SetWindowRgn 成功后区域归系统所有，不能再释放；失败时才要自己释放。
+        if SetWindowRgn(hwnd.0 as isize, region, 1) == 0 {
+            let _ = DeleteObject(region);
+            log_line(format!(
+                "设置窗口裁剪区域失败：{}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn apply_note_region(_window: &WebviewWindow, _paper_w: f64, _paper_h: f64) {}
+
+#[cfg(windows)]
+#[link(name = "gdi32")]
+unsafe extern "system" {
+    fn CreateRectRgn(x1: i32, y1: i32, x2: i32, y2: i32) -> isize;
+    fn DeleteObject(object: isize) -> i32;
+}
+
+#[cfg(windows)]
+#[link(name = "user32")]
+unsafe extern "system" {
+    /// redraw=1：立刻重画，避免裁剪后留下一帧旧内容
+    fn SetWindowRgn(hwnd: isize, region: isize, redraw: i32) -> i32;
 }
 
 /// 关掉 Chromium 的原生窗口遮挡检测。
@@ -776,6 +911,9 @@ pub fn open_note_window(
         window
             .show()
             .map_err(|err| format!("显示便签窗口失败：{err}"))?;
+        if fixed_canvas() {
+            apply_note_region(&window, paper_width(note), paper_height(note));
+        }
         if let Some(store) = app.try_state::<Store>() {
             store.emit_note_focus(app, &note.id);
         }
@@ -792,7 +930,9 @@ pub fn open_note_window(
     crate::boot_log(&format!(
         "open_note_window {label}: build begin x={x} y={y} width={width} height={height}"
     ));
-    let url = format!("index.html?surface=sticky&id={}", encode(&note.id));
+    // 固定画布原型：把模式带给前端——前端据此决定换档是「改窗口」还是「让纸在窗口里伸缩」
+    let canvas_query = if fixed_canvas() { "&canvas=fixed" } else { "" };
+    let url = format!("index.html?surface=sticky&id={}{canvas_query}", encode(&note.id));
     let builder = WebviewWindowBuilder::new(app, label.as_str(), WebviewUrl::App(url.into()))
         .title(note.window_title())
         .inner_size(width, height)
@@ -829,6 +969,10 @@ pub fn open_note_window(
     window
         .show()
         .map_err(|err| format!("显示便签窗口失败：{err}"))?;
+    // 固定画布：先按纸的可见范围裁一刀，否则窗口四周的空白会把桌面的点击吃掉
+    if fixed_canvas() {
+        apply_note_region(&window, paper_width(note), paper_height(note));
+    }
     if focus {
         raise_to_front(&window, note.pinned);
     }
@@ -866,7 +1010,7 @@ pub fn capture_geometry(window: &Window, store: &Store) {
     let measured = Instant::now();
     let position = window.outer_position();
     sample.position_us = measured.elapsed().as_micros();
-    let (x, y) = match position {
+    let (mut x, mut y) = match position {
         Ok(position) => (position.x as f64 / scale, position.y as f64 / scale),
         Err(_) => {
             if let Some(probe) = &probe {
@@ -878,7 +1022,7 @@ pub fn capture_geometry(window: &Window, store: &Store) {
     let measured = Instant::now();
     let size = window.inner_size();
     sample.inner_us = measured.elapsed().as_micros();
-    let (width, height) = match size {
+    let (mut width, mut height) = match size {
         Ok(size) => (size.width as f64 / scale, size.height as f64 / scale),
         Err(_) => {
             if let Some(probe) = &probe {
@@ -888,6 +1032,18 @@ pub fn capture_geometry(window: &Window, store: &Store) {
         }
     };
     sample.ok = true;
+    if fixed_canvas() {
+        // 固定画布：窗口是固定的画布，store 里要存的是「纸」的位置和大小，
+        // 否则下次恢复会把整块画布当成便签，位置越跑越偏。
+        if let Some(note) = store.note(id) {
+            let paper_w = paper_width(&note);
+            let paper_h = paper_height(&note);
+            x = x + paper_w + CANVAS_PAD - CANVAS_WIDTH;
+            y = y - CANVAS_PAD;
+            width = paper_w;
+            height = paper_h;
+        }
+    }
     if let Some(probe) = &probe {
         probe.capture(sample);
     }
