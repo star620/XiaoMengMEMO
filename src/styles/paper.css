@@ -206,11 +206,12 @@
     var(--xm-paper-c) 74%,
     var(--xm-paper-d) 100%
   );
-  transition: opacity 70ms ease-out;
+  transition: opacity 130ms ease-out;
 }
 .xm-size-veil[data-on="1"] {
   opacity: 1;
-  transition-duration: 30ms;
+  transition-duration: 60ms;
+  transition-timing-function: ease-in;
 }
 @media (prefers-reduced-motion: reduce) {
   .xm-size-veil,

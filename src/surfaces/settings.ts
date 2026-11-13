@@ -54,7 +54,7 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     '<button class="xm-seg__item" type="button" data-theme="night">深色</button>' +
     "</div></div>" +
     '<div class="xm-row"><div class="xm-row__label">大小切换' +
-    "<small>直接跳最稳；柔光会先用纸色盖一下再揭开。</small></div>" +
+    "<small>直接跳最稳、最快；柔光先把纸盖一下再淡开，每次多约 0.2 秒。</small></div>" +
     '<div class="xm-seg" role="group" aria-label="大小切换" data-act="size-feel">' +
     '<button class="xm-seg__item" type="button" data-feel="snap">直接跳</button>' +
     '<button class="xm-seg__item" type="button" data-feel="veil">柔光</button>' +
