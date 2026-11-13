@@ -537,7 +537,6 @@ struct SizeMotion {
     tween: Option<SizeTween>,
     last_rect: SizeRect,
     target_rect: SizeRect,
-    css_report: Option<serde_json::Value>,
 }
 
 impl SizeWindow {
@@ -704,91 +703,6 @@ fn animate_step(
     Ok(done)
 }
 
-fn eval_size_css(
-    window: &WebviewWindow,
-    args: serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    let script = format!("{}({args})", include_str!("size_css.js"));
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    window
-        .eval_with_callback(script, move |value| {
-            let _ = tx.send(value);
-        })
-        .map_err(|e| e.to_string())?;
-    let response = rx
-        .recv_timeout(Duration::from_secs(2))
-        .map_err(|e| e.to_string())?;
-    let value: serde_json::Value = serde_json::from_str(&response).map_err(|e| e.to_string())?;
-    if value["ok"] != true {
-        return Err(format!("内容缩放：{value}"));
-    }
-    Ok(value)
-}
-
-fn animate_css_step(
-    webview: &WebviewWindow,
-    native: &SizeWindow,
-    geometry: &SizeGeometry,
-    goal: SizeGoal,
-    motion: &mut SizeMotion,
-    timing: &mut SizeStepTiming,
-) -> Result<bool, String> {
-    if motion.tween.as_ref().map(|t| t.to) != Some(goal) {
-        motion.target_rect = geometry.rect_for(goal);
-        eval_size_css(
-            webview,
-            serde_json::json!({"action":"prepare","width":goal.width,"height":goal.height}),
-        )?;
-        let envelope = SizeRect {
-            x: geometry.rect.x + geometry.rect.width
-                - motion.last_rect.width.max(motion.target_rect.width),
-            y: geometry.rect.y,
-            width: motion.last_rect.width.max(motion.target_rect.width),
-            height: motion.last_rect.height.max(motion.target_rect.height),
-        };
-        if envelope != motion.last_rect {
-            let start = Instant::now();
-            let ok = set_window_rect(native, envelope);
-            timing.set_rect_us = start.elapsed().as_micros();
-            if !ok {
-                return Err("内容缩放包络窗口提交失败".into());
-            }
-            motion.last_rect = envelope;
-        }
-        eval_size_css(webview, serde_json::json!({"action":"play"}))?;
-        motion.tween = Some(SizeTween {
-            from: geometry.logical_size(motion.last_rect),
-            to: goal,
-            started: Instant::now(),
-        });
-        return Ok(false);
-    }
-    if motion
-        .tween
-        .as_ref()
-        .expect("CSS 轨迹存在")
-        .started
-        .elapsed()
-        < Duration::from_millis(120)
-    {
-        return Ok(false);
-    }
-    if motion.last_rect != motion.target_rect {
-        let start = Instant::now();
-        let ok = set_window_rect(native, motion.target_rect);
-        timing.set_rect_us = start.elapsed().as_micros();
-        if !ok {
-            return Err("内容缩放最终窗口提交失败".into());
-        }
-        motion.last_rect = motion.target_rect;
-    }
-    motion.css_report = Some(eval_size_css(
-        webview,
-        serde_json::json!({"action":"finish"}),
-    )?);
-    Ok(true)
-}
-
 /// 把窗口尺寸驱动到指定逻辑大小（宽、高）。
 /// 可以随便连续调用：只有最后一次的目标生效，重复调用会立即返回。
 pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
@@ -819,7 +733,6 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
     } else {
         Duration::ZERO
     };
-    let css = duration != Duration::ZERO && std::env::var("XM_SIZE_ANIM").as_deref() == Ok("css");
     let window = window.clone();
     std::thread::spawn(move || {
         let started = Instant::now();
@@ -836,7 +749,6 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
             tween: None,
             last_rect: initial_rect,
             target_rect: initial_rect,
-            css_report: None,
         };
         let mut frames = 0;
         let mut max_step = Duration::ZERO;
@@ -858,16 +770,6 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
                 .as_ref()
                 .map_err(Clone::clone)
                 .and_then(|(geometry, native)| {
-                    if css {
-                        return animate_css_step(
-                            &window,
-                            native,
-                            geometry,
-                            goal,
-                            &mut motion,
-                            &mut timing,
-                        );
-                    }
                     animate_step(native, geometry, goal, &mut motion, duration, &mut timing)
                 });
             frames += 1;
@@ -904,9 +806,6 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
             // 注册表锁内不能调用窗口或 Store，窗口事件会反向查询动画状态。
             drop(states);
             if let Err(err) = &result {
-                if css {
-                    let _ = eval_size_css(&window, serde_json::json!({"action":"cancel"}));
-                }
                 log_line(format!("尺寸动画失败（{label}）：{err}"));
             }
             let motion_ms = motion
@@ -947,9 +846,6 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
             ));
             if let Some(probe) = &probe {
                 probe.emit();
-            }
-            if css {
-                crate::boot_log(&format!("size_css {label}: report={:?}", motion.css_report));
             }
             break;
         }
