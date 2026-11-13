@@ -17,7 +17,7 @@
 
 ### 0.2 硬约束（改动前必读）
 
-1. **IPC 契约**：34 个 Tauri 命令、4 个事件名属于前后端契约。前端唯一入口是 `src/shared/api.ts`，改任何命令必须同步改这里。
+1. **IPC 契约**：32 个 Tauri 命令、4 个事件名属于前后端契约。前端唯一入口是 `src/shared/api.ts`，改任何命令必须同步改这里。
 2. **数据兼容**：`Note` / `Settings` 的 JSON 字段已经存在于用户数据里。新增字段必须带 serde default，**不得修改既有字段语义**。
 3. **安全最小集**：`src-tauri/tauri.conf.json` 的 CSP 与 `src-tauri/capabilities/default.json` 的权限是最小集合，不要为了省事放开。
 4. **版本号四处同步**：`package.json:3`、`src-tauri/Cargo.toml:3`、`src-tauri/tauri.conf.json:4`、`src/surfaces/settings.ts:18`（`APP_VERSION`）。
@@ -74,7 +74,7 @@
 | `src-tauri/src/lib.rs` | 393 | 启动装配、事件常量、日志、单实例、RunEvent |
 | `src-tauri/src/store.rs` | 2167 | 内存快照 + notes.json / trash.json / history 读写、原子写、备份、导入导出 |
 | `src-tauri/src/windows.rs` | 1285 | 所有窗口创建/显示/置顶/重绘、位置计算、尺寸动画驱动线程 |
-| `src-tauri/src/commands.rs` | 357 | 34 个 `#[tauri::command]` |
+| `src-tauri/src/commands.rs` | 357 | 32 个 `#[tauri::command]`（2026-11-13 校正：原写 34，实测 `grep -c "#\[tauri::command\]"` 为 32） |
 | `src-tauri/src/model.rs` | 370 | 数据结构与默认值（含旧数据兼容测试） |
 | `src-tauri/src/tray.rs` | 282 | 托盘图标与菜单 |
 | `src-tauri/src/hotkey.rs` | 110 | 全局快捷键注册与分发 |
@@ -140,7 +140,7 @@
 
 ### 3.5 命令与事件
 
-34 个命令（`commands.rs`）：
+32 个命令（`commands.rs`，2026-11-13 校正为实测值）：
 
 - 快照/保存：`get_snapshot`、`save_note`、`create_note`、`delete_note`
 - 回收站：`list_trash`、`restore_note`、`empty_trash`
@@ -244,7 +244,11 @@ node tools/cdp-console.mjs            # 抓 console 错误
 | **A8** | **重复启动 exe** | 单实例插件只在第二次启动时唤起既有界面；若它唤起的目标窗口此时不可见/在屏幕外，看起来就是「没反应」 | 双击 exe 两次 | 单实例相关日志 |
 | **A9** | **睡眠/会话切换后热键失效** | Windows 上 global-hotkey 在锁屏/睡眠恢复后偶发失效，代码里**没有重新注册逻辑** | 睡眠 10 分钟唤醒后立刻试 | 无日志（这才是问题） |
 
-### 5.3.1 一条高置信度线索（读代码得出，未验证）
+### 5.3.1 一条线索（原写"高置信度"，2026-11-13 降级为"待验证假设"）
+
+> **校正（AI-B 反驳，AI-A 接受）**：快捷键新建每次都走 `create_note` 生成**新的 note id**，`open_note_window` 不经过「已有窗口」分支，
+> 因此"缺 `force_repaint`"**不能**直接推出"合成器停在暂停态导致空白"。原来的时序吻合只是相关，不是因果。
+> 这条线索保留为**待验证假设**，验证方式见下方「建议的最小验证」；不得作为已确诊结论传给下一轮。
 
 `force_repaint`（`windows.rs:359`，用 opacity 微调 + 高度 ±1px 逼 WebView2 重建绘制表面）**只被三处调用**：`open_aux` 已存在窗口（:760）、`open_aux` 新建窗口（:792）、`open_quick`（:814）。
 
@@ -329,10 +333,10 @@ node tools/cdp-console.mjs            # 抓 console 错误
 
 ### 6.3 性能敏感点（按怀疑度排序）
 
-1. **透明窗口 + 大面积 CSS 阴影/模糊**：`transparent(true)` 的窗口在 DWM 合成上更贵；`app.css:381` 有 `filter:blur(1.6px)`，`paper.css` 里阴影层数很多。
+1. **透明窗口 + 大面积 CSS 阴影/模糊**：`transparent(true)` 的窗口在 DWM 合成上更贵；**基线 v0.2.2** 的 `app.css:381` 有 `filter:blur(1.6px)`（分支 `c6566d6` 已移除），`paper.css` 里阴影层数很多。
 2. **纸纹是运行时生成的噪点/渐变**：每张便签都在绘制多层 background，动画期间会重复栅格化。
 3. **`--disable-features=CalculateNativeWinOcclusion`**（`windows.rs:384`）：好处是被遮挡的便签不会变白，代价是**被遮挡窗口仍继续合成**，多便签时更吃 GPU/CPU。
-4. **每个便签一个 WebView2 渲染器**：20 张便签 = 20 个渲染进程，内存与合成压力线性增长。
+4. **WebView2 实例与渲染进程不是 1:1**：20 张便签不等于 20 个渲染进程（Chromium 可能合并部分进程）。要按 `tasklist /fi "imagename eq msedgewebview2.exe"` 实测进程数与内存，不能按窗口数推算。
 5. **纸张纹理 + 字体的首次加载**：首次打开便签时字体（霞鹜文楷子集 woff2）与纸纹栅格化会带来一帧抖动。
 6. **滚动时的纸边渐隐**：滚动条区域用渐变/遮罩实现，滚动过程中可能触发重绘（`sticky.ts` 里 data-scroll 三态切换）。
 
@@ -353,9 +357,15 @@ node tools/cdp-console.mjs            # 抓 console 错误
    - 长任务 > 16 ms 的位置。
 3. 判定标准：60 Hz 下帧间隔中位数应 ≈16.7 ms，**掉帧超过 3 帧/秒**即视为不合格。
 
+> **两条方法学校正（2026-11-13）**
+> - `requestAnimationFrame` 回调间隔 ≠ 屏幕实际出帧：主线程空闲但合成器/DP 卡住时，rAF 仍会按时回调。它只能证明"主线程没有长任务"，不能证明"画面流畅"。
+> - `document.getAnimations()` 的快照只能说明"此刻列表里有什么"，**不能**证明动画对象没有泄漏（泄漏要看多轮操作后对象数是否单调增长）。
+> - 要证明呈现帧率，必须用 PresentMon / ETW 的 present 事件，或至少给出 95 分位帧间隔与丢帧数。
+
 ### 6.5 已知的低成本结论（不需要改代码就能验证）
 
-- 动画都只动 `transform / opacity / filter`，方向是对的；风险在**合成成本**而不是属性选错。
+- **不是所有动画都只动 transform/opacity/filter**（2026-11-13 校正）：尺寸动画是后端逐帧 `SetWindowPos` + 前端布局重排，属布局属性；
+  纸色切换是颜色过渡。真正"只动合成属性"的只有入场/弹出/菜单/提醒/快速记录那几条。动效结论要按动画分开说，不能一句概括。
 - `prefers-reduced-motion` 已有全局兜底（`paper.css` 的 reduced-motion 段），审查时确认新加动画也遵守。
 - 夜间纸色切换是「整窗颜色过渡」，如果用户频繁切，会比动画更贵——可以考虑改成瞬时切换。
 

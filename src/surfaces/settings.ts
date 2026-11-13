@@ -90,7 +90,8 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     "</section>" +
     '<section class="xm-settings__group">' +
     '<h3 class="xm-settings__group-title">快捷键</h3>' +
-    '<div class="xm-row"><div class="xm-row__label">新建便签</div>' +
+    '<div class="xm-row"><div class="xm-row__label">新建便签' +
+    "<small>按下后光标直接落在正文，可以马上打字。</small></div>" +
     // 键帽本身就是按钮：点一下进入"按下新组合"的捕获状态（契约 §12.4）
     '<button class="xm-kbd xm-kbd--edit" type="button" data-hotkey data-hotkey-edit="new" ' +
     'title="点一下，换一个组合" aria-label="新建便签快捷键，点一下修改">Ctrl + Shift + Space</button></div>' +
