@@ -33,3 +33,12 @@ TODO.md
 .dsh-vision-router/
 # 字体源文件（25 MB，按 tools/build_font_subset.py 头部说明自行下载）
 tools/fonts/*.ttf
+
+# 内部协作文档（只在本机流转，不提交仓库；仓库对外只留 README）
+HANDOFF.md
+HANDOFF_RETURN.md
+COLLAB.md
+TASK-*.md
+RETURN-*.md
+REVIEW-*.md
+IMPLEMENTATION_RETURN.patch
