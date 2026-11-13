@@ -819,7 +819,8 @@ impl Store {
             return;
         };
         let record_size = !crate::windows::is_size_changing(&crate::windows::note_label(id));
-        let changed = apply_window_geometry(note, rect, record_size);
+        let changed =
+            apply_window_geometry(note, crate::size_host::normalize(note, rect), record_size);
         state.dirty |= changed;
     }
 
@@ -846,6 +847,7 @@ impl Store {
                 None => return Ok(()), // 便签可能刚被删掉，忽略即可
             };
             let record_size = !crate::windows::is_size_changing(&crate::windows::note_label(id));
+            let rect = crate::size_host::normalize(&state.notes[index], rect);
             apply_window_geometry(&mut state.notes[index], rect, record_size);
             self.persist_then_clean(&mut state)?;
         }
@@ -913,6 +915,14 @@ impl Store {
         let note = {
             let mut state = self.lock();
             let index = self.index_of(&state, id)?;
+            if crate::size_host::enabled() {
+                let note = &mut state.notes[index];
+                note.x = crate::size_host::resized_x(
+                    note.x,
+                    note.width.unwrap_or(crate::windows::DEFAULT_WIDTH),
+                    width,
+                );
+            }
             state.notes[index].width = Some(width);
             state.notes[index].height = Some(height);
             state.notes[index].updated_at = model::now_ms();

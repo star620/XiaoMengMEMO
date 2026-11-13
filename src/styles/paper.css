@@ -2551,6 +2551,10 @@
   pointer-events: none;
   opacity: 0;
 }
+/* 固定原生容量，纸面自身从右上角扩缩；字体和菜单不参与缩放。 */
+.xm-note[data-size-host="fixed"] { position: absolute; top: 0; right: 0; }
+/* 以紧凑档可用高度为上限，三档切换时菜单外框不再跟着视口变高。 */
+.xm-note[data-size-host="fixed"] .xm-pop--menu { max-height: 284px; }
 .xm-note[data-size-feel="veil"][data-resizing] .xm-note__tools { z-index: 22; }
 .xm-seg__item[data-size-pressed] { color: var(--xm-ink); }
 .xm-seg__item[data-size-pressed]::before { opacity: 1; transition: none; }

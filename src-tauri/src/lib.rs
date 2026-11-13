@@ -6,6 +6,7 @@ pub mod commands;
 pub mod hotkey;
 pub mod model;
 pub mod reminder;
+mod size_host;
 mod size_probe;
 pub mod startup;
 pub mod store;
@@ -386,6 +387,7 @@ pub fn run() {
             commands::set_pinned,
             commands::set_note_collapsed,
             commands::set_note_size,
+            commands::finish_note_resize,
             commands::set_note_locked,
             commands::export_notes,
             commands::restore_from_backup,

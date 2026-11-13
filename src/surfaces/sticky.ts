@@ -213,7 +213,9 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
   const noteEl = query<HTMLElement>(root, ".xm-note");
 
   const paperEl = query<HTMLElement>(root, ".xm-note__paper");
-  const sizeFeel = createSizeFeel(noteEl, paperEl);
+  const sizeFeel = createSizeFeel(noteEl, paperEl, {
+    id: draft.id, width: draft.width || 320, height: draft.collapsed ? 64 : draft.height || 380,
+  });
   const dragEl = query<HTMLElement>(root, ".xm-note__drag");
   const titleInput = query<HTMLInputElement>(root, ".xm-note__title");
   const panelBtn = query<HTMLButtonElement>(root, '[data-act="panel"]');
@@ -927,7 +929,7 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     if (sizeIntent) {
       best = sizeIntent;
     } else {
-      const current = Math.round(window.innerWidth || draft.width || 320);
+      const current = Math.round(noteEl.offsetWidth || draft.width || 320);
       let bestGap = Number.POSITIVE_INFINITY;
       for (const preset of SIZE_PRESETS) {
         const gap = Math.abs(preset.width - current);
@@ -969,7 +971,7 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
   function syncSizeIntent(): void {
     if (sizeIntent) {
       const preset = SIZE_PRESETS.find((item) => item.key === sizeIntent);
-      const width = Math.round(window.innerWidth || 0);
+      const width = noteEl.offsetWidth;
       const reached = preset ? Math.abs(preset.width - width) < 30 : true;
       if (!preset || reached || Date.now() - sizeIntentAt > 800) {
         clearSizeIntent();
@@ -2530,6 +2532,8 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     resizeObserver.observe(scrollEl);
     const content = contentEl();
     if (content) resizeObserver.observe(content);
+    const sizeObserver = new ResizeObserver(syncSizeIntent);
+    sizeObserver.observe(noteEl);
   }
 
   // 外部改动（面板里改颜色、后端补发提醒等）：没在编辑就刷新当前便签

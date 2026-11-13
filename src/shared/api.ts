@@ -88,6 +88,8 @@ function call<T>(cmd: string, args?: Args): Promise<T> {
 }
 
 export const api = {
+  finishNoteResize: (id: string, revision: number, width: number, height: number) =>
+    call<boolean>("finish_note_resize", { id, revision, width, height }),
   getSnapshot: () => call<Snapshot>("get_snapshot"),
   saveNote: (note: Note) => call<Note>("save_note", { note }),
   deleteNote: (id: string) => call<void>("delete_note", { id }),

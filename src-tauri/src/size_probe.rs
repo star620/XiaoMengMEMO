@@ -35,7 +35,7 @@ pub(crate) struct CaptureSample {
 #[derive(Serialize)]
 pub(crate) struct SizeCompletion {
     pub worker_epoch_ms: f64,
-    pub native_return_epoch_ms: f64,
+    pub native_return_epoch_ms: Option<f64>,
     pub elapsed_us: u128,
     pub setup_us: u128,
     pub final_read_us: u128,

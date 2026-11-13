@@ -132,6 +132,19 @@ struct Rect {
     h: f64,
 }
 
+fn visual_window_rect(app: &AppHandle, label: &str, raw: WindowState) -> Rect {
+    let visual = note_id_from_label(label)
+        .and_then(|id| app.try_state::<Store>()?.note(id))
+        .map(|note| crate::size_host::normalize(&note, raw))
+        .unwrap_or(raw);
+    Rect {
+        x: visual.x,
+        y: visual.y,
+        w: visual.width,
+        h: visual.height,
+    }
+}
+
 /// 候选窗口被已有窗口盖住的比例：0 表示完全错开，1 表示完全重合
 fn overlap_ratio(candidate: Rect, other: Rect) -> f64 {
     let width = (candidate.x + candidate.w).min(other.x + other.w) - candidate.x.max(other.x);
@@ -157,12 +170,16 @@ fn note_window_rects(app: &AppHandle) -> Vec<Rect> {
         let (Ok(position), Ok(size)) = (window.outer_position(), window.inner_size()) else {
             continue;
         };
-        rects.push(Rect {
-            x: position.x as f64 / scale,
-            y: position.y as f64 / scale,
-            w: size.width as f64 / scale,
-            h: size.height as f64 / scale,
-        });
+        rects.push(visual_window_rect(
+            app,
+            &label,
+            WindowState {
+                x: position.x as f64 / scale,
+                y: position.y as f64 / scale,
+                width: size.width as f64 / scale,
+                height: size.height as f64 / scale,
+            },
+        ));
     }
     rects
 }
@@ -390,8 +407,9 @@ fn force_repaint(window: &WebviewWindow) {
 /// 省那点电不值得，直接关掉这个特性。
 const WEBVIEW_ARGS: &str = "--disable-features=CalculateNativeWinOcclusion";
 
-fn size_feel_mode(value: Option<&str>) -> &'static str {
+pub(crate) fn size_feel_mode(value: Option<&str>) -> &'static str {
     match value {
+        Some("smooth") => "smooth",
         Some("fade") => "fade",
         Some("veil") => "veil",
         _ => "snap",
@@ -483,11 +501,12 @@ pub fn begin_size_change(label: &str) -> SizeChangeGuard {
 }
 
 pub fn is_size_changing(label: &str) -> bool {
-    size_states()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .get(label)
-        .is_some_and(|state| state.running || state.pending != 0)
+    crate::size_host::active(label)
+        || size_states()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(label)
+            .is_some_and(|state| state.running || state.pending != 0)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -764,7 +783,7 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
             if let Some(probe) = &probe {
                 probe.emit(crate::size_probe::SizeCompletion {
                     worker_epoch_ms,
-                    native_return_epoch_ms,
+                    native_return_epoch_ms: Some(native_return_epoch_ms),
                     elapsed_us,
                     setup_us,
                     final_read_us,
@@ -779,14 +798,23 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
 }
 
 /// 按折叠状态一次提交窗口高度（宽度不变）
-pub fn apply_collapsed(window: &WebviewWindow, collapsed: bool, width: f64, height: f64) {
+pub fn apply_collapsed(
+    window: &WebviewWindow,
+    collapsed: bool,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
     let to = if collapsed { COLLAPSED_HEIGHT } else { height };
-    drive_size(window, width, to);
+    apply_size(window, width, to)
 }
 
 /// 按「紧凑 / 标准 / 大」三档设置便签尺寸（逻辑像素）
-pub fn apply_size(window: &WebviewWindow, width: f64, height: f64) {
+pub fn apply_size(window: &WebviewWindow, width: f64, height: f64) -> Result<(), String> {
+    if crate::size_host::enabled() {
+        return crate::size_host::prepare(window, width, height);
+    }
     drive_size(window, width, height);
+    Ok(())
 }
 
 /// 打开便签窗口：已存在就显示（可选聚焦），不存在就按记忆的几何信息新建
@@ -827,22 +855,29 @@ pub fn open_note_window(
     }
 
     let (x, y, width, height) = note_geometry(app, note);
+    let fixed_host = crate::size_host::enabled();
+    let host_width = if fixed_host { width.max(400.0) } else { width };
+    let host_height = if fixed_host {
+        height.max(note.height.unwrap_or(DEFAULT_HEIGHT)).max(500.0)
+    } else {
+        height
+    };
     crate::boot_log(&format!(
         "open_note_window {label}: build begin x={x} y={y} width={width} height={height}"
     ));
     let url = format!("index.html?surface=sticky&id={}", encode(&note.id));
     let builder = WebviewWindowBuilder::new(app, label.as_str(), WebviewUrl::App(url.into()))
         .initialization_script(format!(
-            "Object.defineProperty(window,'__XM_SIZE_FEEL__',{{value:{}}});",
+            "Object.defineProperty(window,'__XM_SIZE_FEEL__',{{value:{}}});Object.defineProperty(window,'__XM_SIZE_INITIAL__',{{value:{{width:{width},height:{height}}}}});",
             serde_json::to_string(size_feel_mode(
                 std::env::var("XM_SIZE_FEEL").ok().as_deref()
             ))
             .expect("模式可序列化")
         ))
         .title(note.window_title())
-        .inner_size(width, height)
+        .inner_size(host_width, host_height)
         .min_inner_size(MIN_WIDTH, MIN_NOTE_HEIGHT)
-        .position(x, y)
+        .position(x + width - host_width, y)
         .decorations(false)
         .transparent(true)
         .shadow(false)
@@ -867,6 +902,9 @@ pub fn open_note_window(
     let window = builder
         .build()
         .map_err(|err| format!("创建便签窗口失败：{err}"))?;
+    if fixed_host {
+        crate::size_host::region(&window, Some((width, height)), None)?;
+    }
     crate::boot_log(&format!(
         "open_note_window {label}: build done elapsed_ms={}",
         started.elapsed().as_millis()
@@ -1328,12 +1366,16 @@ fn visible_note_rects(app: &AppHandle, exclude: &str) -> Vec<Rect> {
         let (Ok(position), Ok(size)) = (window.outer_position(), window.inner_size()) else {
             continue;
         };
-        rects.push(Rect {
-            x: position.x as f64 / scale,
-            y: position.y as f64 / scale,
-            w: size.width as f64 / scale,
-            h: size.height as f64 / scale,
-        });
+        rects.push(visual_window_rect(
+            app,
+            &label,
+            WindowState {
+                x: position.x as f64 / scale,
+                y: position.y as f64 / scale,
+                width: size.width as f64 / scale,
+                height: size.height as f64 / scale,
+            },
+        ));
     }
     rects
 }
@@ -1383,6 +1425,9 @@ fn aligned_y(rect: Rect, others: &[Rect]) -> Option<f64> {
 
 /// 对一张便签做一次吸边/对齐；真的移动了才写盘（不抖动）
 fn snap_one(app: &AppHandle, label: &str) {
+    if is_size_changing(label) {
+        return;
+    }
     let Some(id) = note_id_from_label(label) else {
         return;
     };
@@ -1400,12 +1445,13 @@ fn snap_one(app: &AppHandle, label: &str) {
     let (Ok(position), Ok(size)) = (window.outer_position(), window.inner_size()) else {
         return;
     };
-    let rect = Rect {
+    let raw = WindowState {
         x: position.x as f64 / scale,
         y: position.y as f64 / scale,
-        w: size.width as f64 / scale,
-        h: size.height as f64 / scale,
+        width: size.width as f64 / scale,
+        height: size.height as f64 / scale,
     };
+    let rect = visual_window_rect(app, label, raw);
     if rect.w <= 0.0 || rect.h <= 0.0 {
         return;
     }
@@ -1464,7 +1510,7 @@ fn snap_one(app: &AppHandle, label: &str) {
         return;
     }
     let target = tauri::PhysicalPosition::new(
-        (target_x * scale).round() as i32,
+        ((target_x + raw.x - rect.x) * scale).round() as i32,
         (target_y * scale).round() as i32,
     );
     if let Err(err) = window.set_position(target) {
@@ -1474,10 +1520,10 @@ fn snap_one(app: &AppHandle, label: &str) {
     // 契约要求：吸附后立即把这个位置写盘
     let store = app.state::<Store>();
     let state = WindowState {
-        x: target_x.round(),
-        y: target_y.round(),
-        width: rect.w.round(),
-        height: rect.h.round(),
+        x: target.x as f64 / scale,
+        y: target.y as f64 / scale,
+        width: raw.width,
+        height: raw.height,
     };
     if let Err(err) = store.save_window_state(app, id, state) {
         log_line(format!("吸边后保存窗口位置失败：{err}"));

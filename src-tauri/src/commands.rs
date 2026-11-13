@@ -115,7 +115,10 @@ pub async fn set_note_collapsed(
     // 只有稳定窗口能提供展开高度；动画中连点时以 Store 中的目标尺寸为准。
     let expanded_height = window
         .as_ref()
-        .filter(|_| change.as_ref().is_some_and(|change| !change.was_changing()))
+        .filter(|_| {
+            !crate::size_host::enabled()
+                && change.as_ref().is_some_and(|change| !change.was_changing())
+        })
         .and_then(|window| {
             let scale = window
                 .scale_factor()
@@ -134,7 +137,7 @@ pub async fn set_note_collapsed(
             .height
             .unwrap_or(windows::DEFAULT_HEIGHT)
             .max(windows::MIN_HEIGHT);
-        windows::apply_collapsed(&window, collapsed, width, height);
+        windows::apply_collapsed(&window, collapsed, width, height)?;
     }
     Ok(note)
 }
@@ -159,9 +162,27 @@ pub async fn set_note_size(
         } else {
             height
         };
-        windows::apply_size(&window, width, visible_height);
+        windows::apply_size(&window, width, visible_height)?;
     }
     Ok(note)
+}
+
+/// 前端只确认可见尺寸；旧 revision 不得收紧新动画的可点击区域。
+#[tauri::command]
+pub async fn finish_note_resize(
+    app: AppHandle,
+    id: String,
+    revision: u64,
+    width: f64,
+    height: f64,
+) -> Result<bool, String> {
+    if !crate::size_host::enabled() {
+        return Ok(false);
+    }
+    let window = app
+        .get_webview_window(&windows::note_label(&id))
+        .ok_or("便签窗口已关闭")?;
+    crate::size_host::finish(&window, revision, width, height)
 }
 
 /// 锁定 / 解锁便签：数据落库（正文保护在 store::save_note 里做）
