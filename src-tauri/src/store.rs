@@ -395,18 +395,11 @@ impl Store {
             // 创建时间、窗口位置大小、是否隐藏都由后端维护：
             // 前端只是保存正文，可能传来旧的 / 空的几何信息，不能让它覆盖真实状态
             if let Some(existing) = previous.as_ref() {
-                if note.x.is_none() {
-                    note.x = existing.x;
-                }
-                if note.y.is_none() {
-                    note.y = existing.y;
-                }
-                if note.width.is_none() {
-                    note.width = existing.width;
-                }
-                if note.height.is_none() {
-                    note.height = existing.height;
-                }
+                note.x = existing.x;
+                note.y = existing.y;
+                note.width = existing.width;
+                note.height = existing.height;
+                note.collapsed = existing.collapsed;
                 note.hidden = existing.hidden;
                 note.created_at = existing.created_at;
                 // 锁定状态也由后端说了算（前端可能传来旧快照里的 false）
@@ -786,22 +779,9 @@ impl Store {
         let Some(note) = state.notes.iter_mut().find(|note| note.id == id) else {
             return;
         };
-        let same = note.x == Some(rect.x)
-            && note.y == Some(rect.y)
-            && note.width == Some(rect.width)
-            && note.height == Some(rect.height);
-        if same {
-            return;
-        }
-        note.x = Some(rect.x);
-        note.y = Some(rect.y);
-        note.width = Some(rect.width);
-        // 收起态那 64px 是折叠形态，不是便签的展开高度：别拿它覆盖记忆值，
-        // 否则一折叠再展开，便签就永久缩成一条（用户实测报过这个 bug）。
-        if !note.collapsed || rect.height > crate::windows::COLLAPSED_HEIGHT + 8.0 {
-            note.height = Some(rect.height);
-        }
-        state.dirty = true;
+        let record_size = !crate::windows::is_size_changing(&crate::windows::note_label(id));
+        let changed = apply_window_geometry(note, rect, record_size);
+        state.dirty |= changed;
     }
 
     /// 前端 save_window_state：立刻落盘（拖动结束后调用，重要位置不丢）
@@ -826,15 +806,8 @@ impl Store {
                 Some(index) => index,
                 None => return Ok(()), // 便签可能刚被删掉，忽略即可
             };
-            state.notes[index].x = Some(rect.x);
-            state.notes[index].y = Some(rect.y);
-            state.notes[index].width = Some(rect.width);
-            // 收起态窗口只有 64px 高：这是折叠形态的高度，不能当成便签的展开高度存下来，
-            // 否则展开时按 64 还原，便签就卡在一条矮条上、再也回不到原样。
-            let collapsed = state.notes[index].collapsed;
-            if !collapsed || rect.height > crate::windows::COLLAPSED_HEIGHT + 8.0 {
-                state.notes[index].height = Some(rect.height);
-            }
+            let record_size = !crate::windows::is_size_changing(&crate::windows::note_label(id));
+            apply_window_geometry(&mut state.notes[index], rect, record_size);
             self.persist_then_clean(&mut state)?;
         }
         Ok(())
@@ -856,13 +829,13 @@ impl Store {
         let note = {
             let mut state = self.lock();
             let index = self.index_of(&state, id)?;
-            if collapsed {
+            if collapsed && !state.notes[index].collapsed {
                 if let Some(height) = expanded_height {
-                    if height > crate::windows::COLLAPSED_HEIGHT + 8.0 {
+                    if height.is_finite() && height >= crate::windows::MIN_EXPANDED_HEIGHT {
                         state.notes[index].height = Some(height);
                     }
                 }
-            } else {
+            } else if !collapsed {
                 // 展开：记忆高度如果小于一个正常便签（比如动画中途被写成了 73 / 120），
                 // 就回落到默认高度，别让用户展开出一张压在 120px 的窄条。
                 let too_short = state.notes[index]
@@ -891,6 +864,13 @@ impl Store {
         width: f64,
         height: f64,
     ) -> Result<Note, String> {
+        if !width.is_finite()
+            || !height.is_finite()
+            || width < crate::windows::MIN_WIDTH
+            || height < crate::windows::MIN_HEIGHT
+        {
+            return Err("便签大小不是有效尺寸，已忽略".to_string());
+        }
         let note = {
             let mut state = self.lock();
             let index = self.index_of(&state, id)?;
@@ -1671,6 +1651,29 @@ fn sanitize(snapshot: &mut Snapshot) {
     snapshot.settings.hotkey_new_note = snapshot.settings.hotkey_new_note.trim().to_string();
 }
 
+/// 动画中仍记录位置，宽高只从稳定窗口采集；折叠态永远保留展开高度。
+fn apply_window_geometry(note: &mut Note, rect: WindowState, record_size: bool) -> bool {
+    let width = if record_size {
+        Some(rect.width)
+    } else {
+        note.width
+    };
+    let height = if record_size && !note.collapsed {
+        Some(rect.height)
+    } else {
+        note.height
+    };
+    let changed = note.x != Some(rect.x)
+        || note.y != Some(rect.y)
+        || note.width != width
+        || note.height != height;
+    note.x = Some(rect.x);
+    note.y = Some(rect.y);
+    note.width = width;
+    note.height = height;
+    changed
+}
+
 /// 原子写文件：先写 notes.json.tmp，再 rename 覆盖 notes.json。
 ///
 /// rename 失败（杀毒软件 / 索引服务短暂占用文件）时最多重试 3 次；
@@ -1799,6 +1802,98 @@ mod tests {
             .single()
             .expect("应是合法的本地时间")
             .timestamp_millis()
+    }
+
+    #[test]
+    fn 收起动画和折叠后的移动不会覆盖展开高度() {
+        for expanded_height in [330.0, 380.0, 500.0] {
+            let mut note = Note::new(NoteKind::Memo, "yellow", 1.0, None);
+            note.width = Some(400.0);
+            note.height = Some(expanded_height);
+            note.collapsed = true;
+            // 覆盖旧逻辑会误记的 >72px 中间帧，以及动画结束后的移动。
+            for height in [304.0, 196.0, 137.0, 104.0, 86.0, 76.0, 71.0, 64.0] {
+                apply_window_geometry(
+                    &mut note,
+                    WindowState {
+                        x: 120.0,
+                        y: 240.0,
+                        width: 400.0,
+                        height,
+                    },
+                    true,
+                );
+                assert_eq!(note.height, Some(expanded_height));
+            }
+            assert_eq!(note.x, Some(120.0));
+            assert_eq!(note.y, Some(240.0));
+        }
+    }
+
+    #[test]
+    fn 尺寸命令期间记位置但保留目标宽高且失败退出后可继续采集() {
+        // 只用内存，不启动应用，也不写测试目录或真实 APPDATA。
+        let store = test_store(Path::new("unused-size-state-test"));
+        let mut note = Note::new(NoteKind::Memo, "yellow", 1.0, None);
+        note.width = Some(400.0);
+        note.height = Some(500.0);
+        store.lock().notes.push(note.clone());
+        let guard = crate::windows::begin_size_change(&crate::windows::note_label(&note.id));
+        store.update_window_geometry(
+            &note.id,
+            WindowState {
+                x: 80.0,
+                y: 100.0,
+                width: 340.0,
+                height: 420.0,
+            },
+        );
+        let captured = store.note(&note.id).expect("便签存在");
+        assert_eq!((captured.x, captured.y), (Some(80.0), Some(100.0)));
+        assert_eq!(
+            (captured.width, captured.height),
+            (Some(400.0), Some(500.0))
+        );
+        // 模拟命令在启动动画前返回错误：RAII 保护释放后不会永久禁止采集。
+        drop(guard);
+        store.update_window_geometry(
+            &note.id,
+            WindowState {
+                x: 80.0,
+                y: 100.0,
+                width: 320.0,
+                height: 380.0,
+            },
+        );
+        let captured = store.note(&note.id).expect("便签存在");
+        assert_eq!(
+            (captured.width, captured.height),
+            (Some(320.0), Some(380.0))
+        );
+    }
+
+    #[test]
+    fn 自动保存正文不会用旧快照回滚窗口几何和折叠状态() {
+        let dir = temp_dir("save-stable-geometry");
+        let store = test_store(&dir);
+        let mut note = Note::new(NoteKind::Memo, "yellow", 1.0, None);
+        note.width = Some(320.0);
+        note.height = Some(380.0);
+        let mut stale = note.clone();
+        stale.content = "动画期间修改的正文".to_string();
+        note.x = Some(120.0);
+        note.y = Some(240.0);
+        note.width = Some(400.0);
+        note.height = Some(500.0);
+        note.collapsed = true;
+        store.lock().notes.push(note);
+
+        let saved = store.save_note_core(stale).expect("正文保存成功");
+        assert_eq!(saved.content, "动画期间修改的正文");
+        assert_eq!((saved.x, saved.y), (Some(120.0), Some(240.0)));
+        assert_eq!((saved.width, saved.height), (Some(400.0), Some(500.0)));
+        assert!(saved.collapsed);
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

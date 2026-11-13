@@ -40,6 +40,7 @@ async function boot(): Promise<void> {
   try {
     const mod = await loader();
     await mod.mount(app, { noteId });
+    console.info("xm-window-mounted", { surface: requested, noteId, at: Date.now() });
   } catch (error) {
     // 某个窗口没加载起来时至少给一句人话，别留一片透明的空白
     console.error("窗口加载失败", error);

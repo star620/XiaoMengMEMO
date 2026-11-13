@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window};
 
@@ -319,6 +319,13 @@ fn raise_to_front(window: &WebviewWindow, keep_on_top: bool) {
         let handle = window.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(700));
+            // 用户可能已在这 700ms 内点了图钉，不能把新的置顶状态撤销。
+            let pinned_now = note_id_from_label(handle.label())
+                .and_then(|id| handle.app_handle().try_state::<Store>()?.note(id))
+                .is_some_and(|note| note.pinned);
+            if pinned_now {
+                return;
+            }
             let _ = handle.set_always_on_top(false);
             crate::boot_log(&format!(
                 "raise {}: released topmost, focus={:?}",
@@ -392,31 +399,110 @@ const WEBVIEW_ARGS: &str = "--disable-features=CalculateNativeWinOcclusion";
 // * 同一个窗口同一时间只有一个线程在跑，后来的调用只更新目标；
 // * 每帧用一次 Win32 SetWindowPos 同时改位置和大小（原子），右上角锚点不再抖。
 
-/// 每帧逼近剩余距离的比例（越大越快）
-const SIZE_APPROACH: f64 = 0.45;
-/// 离目标不到这个逻辑像素数就直接对齐，避免最后几帧 1px 地磨蹭
-const SIZE_SNAP: f64 = 2.0;
-/// 驱动线程的帧间隔（毫秒）
-const SIZE_FRAME_MS: u64 = 12;
+/// 时长按真实经过时间计算，不随原生调用变慢而逐帧拉长。
+const SIZE_DURATION: Duration = Duration::from_millis(160);
+const SIZE_FRAME: Duration = Duration::from_millis(16);
 
 /// 一个窗口当前的尺寸目标（逻辑像素）
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct SizeGoal {
     width: f64,
     height: f64,
 }
 
-/// 每个窗口最新的尺寸目标：后一次写入覆盖前一次
-static SIZE_GOALS: OnceLock<Mutex<HashMap<String, SizeGoal>>> = OnceLock::new();
-/// 正在跑尺寸驱动线程的窗口
-static SIZE_RUNNING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-
-fn size_goals() -> &'static Mutex<HashMap<String, SizeGoal>> {
-    SIZE_GOALS.get_or_init(|| Mutex::new(HashMap::new()))
+#[derive(Default)]
+struct SizeState {
+    goal: Option<SizeGoal>,
+    running: bool,
+    pending: usize,
 }
 
-fn size_running() -> &'static Mutex<HashSet<String>> {
-    SIZE_RUNNING.get_or_init(|| Mutex::new(HashSet::new()))
+/// 同一把锁管理目标、运行状态和落盘前的保护，收尾不会丢掉刚更新的目标。
+static SIZE_STATES: OnceLock<Mutex<HashMap<String, SizeState>>> = OnceLock::new();
+
+fn size_states() -> &'static Mutex<HashMap<String, SizeState>> {
+    SIZE_STATES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub struct SizeChangeGuard {
+    label: String,
+    was_changing: bool,
+}
+
+impl SizeChangeGuard {
+    pub fn was_changing(&self) -> bool {
+        self.was_changing
+    }
+}
+
+impl Drop for SizeChangeGuard {
+    fn drop(&mut self) {
+        let mut states = size_states().lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(state) = states.get_mut(&self.label) {
+            state.pending -= 1;
+            if state.pending == 0 && !state.running {
+                states.remove(&self.label);
+            }
+        }
+    }
+}
+
+/// 在写入目标尺寸前就开始保护；命令失败时 Drop 会自动解除，避免遗留禁写状态。
+pub fn begin_size_change(label: &str) -> SizeChangeGuard {
+    let mut states = size_states().lock().unwrap_or_else(|p| p.into_inner());
+    let state = states.entry(label.to_string()).or_default();
+    let was_changing = state.running || state.pending != 0;
+    state.pending += 1;
+    SizeChangeGuard {
+        label: label.to_string(),
+        was_changing,
+    }
+}
+
+pub fn is_size_changing(label: &str) -> bool {
+    size_states()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(label)
+        .is_some_and(|state| state.running || state.pending != 0)
+}
+
+struct SizeTween {
+    from: SizeGoal,
+    to: SizeGoal,
+    started: Instant,
+}
+
+fn sample_size(from: SizeGoal, to: SizeGoal, elapsed: Duration, duration: Duration) -> SizeGoal {
+    if elapsed >= duration {
+        return to;
+    }
+    let progress = elapsed.as_secs_f64() / duration.as_secs_f64();
+    let eased = 1.0 - (1.0 - progress).powi(3);
+    SizeGoal {
+        width: from.width + (to.width - from.width) * eased,
+        height: from.height + (to.height - from.height) * eased,
+    }
+}
+
+#[cfg(windows)]
+fn system_animations_enabled() -> bool {
+    const SPI_GETCLIENTAREAANIMATION: u32 = 0x1042;
+    let mut enabled: i32 = 1;
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            (&mut enabled as *mut i32).cast(),
+            0,
+        )
+    };
+    ok == 0 || enabled != 0
+}
+
+#[cfg(not(windows))]
+fn system_animations_enabled() -> bool {
+    true
 }
 
 /// 用一次 Win32 SetWindowPos 原子地完成「移动 + 改尺寸」。
@@ -450,6 +536,12 @@ unsafe extern "system" {
     /// after=0 且带 SWP_NOZORDER 时忽略；cx/cy 是物理像素
     fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32)
         -> i32;
+    fn SystemParametersInfoW(
+        action: u32,
+        param: u32,
+        value: *mut std::ffi::c_void,
+        flags: u32,
+    ) -> i32;
 }
 
 /// 非 Windows 平台（只用于开发调试）退化成两次原生调用
@@ -471,61 +563,60 @@ fn set_window_rect(window: &WebviewWindow, x: i32, y: i32, cx: i32, cy: i32) -> 
     size_ok && pos_ok
 }
 
-/// 比例逼近：一步走剩余距离的 45%，但至少迈 2px（不然最后几像素会磨蹭）；
-/// 离目标不到 2px 时直接对齐，保证最终尺寸不差一像素。
-fn approach(current: f64, target: f64) -> f64 {
-    let diff = target - current;
-    let distance = diff.abs();
-    if distance <= SIZE_SNAP {
-        return target;
-    }
-    let step = (distance * SIZE_APPROACH).max(SIZE_SNAP);
-    if diff > 0.0 {
-        (current + step).min(target)
-    } else {
-        (current - step).max(target)
-    }
-}
-
 /// 朝目标走一帧；返回 true 表示已经精确到达。
 /// 每帧都重新读窗口当前位置/尺寸，所以用户中途拖动窗口时会以当前右上角为准。
-fn animate_step(window: &WebviewWindow, goal: SizeGoal) -> bool {
-    let Ok(size) = window.inner_size() else {
-        return true; // 窗口已经没了
-    };
-    let Ok(position) = window.outer_position() else {
-        return true;
-    };
-    let Ok(outer) = window.outer_size() else {
-        return true;
-    };
-    let scale = window.scale_factor().unwrap_or(1.0);
-    if scale <= 0.0 {
-        return true;
+fn animate_step(
+    window: &WebviewWindow,
+    goal: SizeGoal,
+    tween: &mut Option<SizeTween>,
+    duration: Duration,
+) -> Result<bool, String> {
+    let size = window.inner_size().map_err(|err| err.to_string())?;
+    let position = window.outer_position().map_err(|err| err.to_string())?;
+    let outer = window.outer_size().map_err(|err| err.to_string())?;
+    let scale = window.scale_factor().map_err(|err| err.to_string())?;
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err("窗口缩放比例无效".to_string());
     }
-    // 物理像素 → 逻辑像素
-    let cur_w = size.width as f64 / scale;
-    let cur_h = size.height as f64 / scale;
-    let width = approach(cur_w, goal.width);
-    let height = approach(cur_h, goal.height);
-    let cx = (width * scale).round() as i32;
-    let cy = (height * scale).round() as i32;
+    // 目标变化时从当前真实尺寸重新起步，不从上一段动画的起点跳回去。
+    if tween.as_ref().map(|motion| motion.to) != Some(goal) {
+        *tween = Some(SizeTween {
+            from: SizeGoal {
+                width: size.width as f64 / scale,
+                height: size.height as f64 / scale,
+            },
+            to: goal,
+            started: Instant::now(),
+        });
+    }
+    let motion = tween.as_ref().expect("尺寸轨迹已初始化");
+    let next = sample_size(motion.from, motion.to, motion.started.elapsed(), duration);
+    let cx = (next.width * scale).round() as i32;
+    let cy = (next.height * scale).round() as i32;
     // 右上角锚点：右边缘在物理像素里固定，宽度变了只把 x 往回推
     let right = position.x + outer.width as i32;
     let x = right - cx;
     let y = position.y;
-    if !set_window_rect(window, x, y, cx, cy) {
-        log_line(format!("尺寸动画：SetWindowPos 失败（{}）", window.label()));
-        return true;
+    if (size.width as i32 != cx || size.height as i32 != cy)
+        && !set_window_rect(window, x, y, cx, cy)
+    {
+        return Err(format!(
+            "SetWindowPos 失败：{}",
+            std::io::Error::last_os_error()
+        ));
     }
     let target_cx = (goal.width * scale).round();
     let target_cy = (goal.height * scale).round();
-    (cx as f64 - target_cx).abs() < 1.0 && (cy as f64 - target_cy).abs() < 1.0
+    Ok((cx as f64 - target_cx).abs() < 1.0 && (cy as f64 - target_cy).abs() < 1.0)
 }
 
 /// 把窗口尺寸驱动到指定逻辑大小（宽、高）。
 /// 可以随便连续调用：只有最后一次的目标生效，重复调用会立即返回。
 pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
+    if !to_width.is_finite() || !to_height.is_finite() {
+        log_line(format!("尺寸动画：目标尺寸无效（{}）", window.label()));
+        return;
+    }
     // 宽度不能小于 MIN_WIDTH；高度用 MIN_NOTE_HEIGHT(56)，
     // 这样折叠目标 64 才不会被普通便签的 MIN_HEIGHT(120) 夹回去。
     let goal = SizeGoal {
@@ -534,57 +625,76 @@ pub fn drive_size(window: &WebviewWindow, to_width: f64, to_height: f64) {
     };
     let label = window.label().to_string();
 
-    let mut goals = size_goals().lock().unwrap_or_else(|p| p.into_inner());
-    goals.insert(label.clone(), goal);
-    let mut running = size_running().lock().unwrap_or_else(|p| p.into_inner());
-    if !running.insert(label.clone()) {
-        return; // 已有线程在追目标，它会读到刚写入的新目标
+    let mut states = size_states().lock().unwrap_or_else(|p| p.into_inner());
+    let state = states.entry(label.clone()).or_default();
+    state.goal = Some(goal);
+    if state.running {
+        return;
     }
-    drop(running);
-    drop(goals);
+    state.running = true;
+    drop(states);
 
+    let duration = if system_animations_enabled() {
+        SIZE_DURATION
+    } else {
+        Duration::ZERO
+    };
     let window = window.clone();
-    std::thread::spawn(move || loop {
-        let goal = {
-            let goals = size_goals().lock().unwrap_or_else(|p| p.into_inner());
-            match goals.get(&label) {
-                Some(goal) => *goal,
-                None => break,
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        let mut tween = None;
+        let mut frames = 0;
+        let mut max_step = Duration::ZERO;
+        loop {
+            let frame_started = Instant::now();
+            let goal = {
+                let states = size_states().lock().unwrap_or_else(|p| p.into_inner());
+                match states.get(&label).and_then(|state| state.goal) {
+                    Some(goal) => goal,
+                    None => break,
+                }
+            };
+            let result = animate_step(&window, goal, &mut tween, duration);
+            frames += 1;
+            max_step = max_step.max(frame_started.elapsed());
+            if matches!(result, Ok(false)) {
+                std::thread::sleep(SIZE_FRAME.saturating_sub(frame_started.elapsed()));
+                continue;
             }
-        };
-        if !animate_step(&window, goal) {
-            std::thread::sleep(Duration::from_millis(SIZE_FRAME_MS));
-            continue;
+            let mut states = size_states().lock().unwrap_or_else(|p| p.into_inner());
+            let state = states.get_mut(&label).expect("运行中的尺寸状态存在");
+            if result.is_ok() && state.goal != Some(goal) {
+                continue;
+            }
+            state.running = false;
+            state.goal = None;
+            if state.pending == 0 {
+                states.remove(&label);
+            }
+            // 注册表锁内不能调用窗口或 Store，窗口事件会反向查询动画状态。
+            drop(states);
+            if let Err(err) = &result {
+                log_line(format!("尺寸动画失败（{label}）：{err}"));
+            }
+            let app = window.app_handle();
+            if let Some(store) = app.try_state::<Store>() {
+                let webview: &tauri::Webview = window.as_ref();
+                capture_geometry(&webview.window(), &store);
+            }
+            // 每次动画只汇总一条，避免逐帧日志的磁盘 IO 干扰测量。
+            crate::boot_log(&format!(
+                "size_animation {label}: goal={goal:?} elapsed_ms={} steps={frames} max_step_us={} ok={}",
+                started.elapsed().as_millis(),
+                max_step.as_micros(),
+                result.is_ok()
+            ));
+            break;
         }
-        // 到目标了。收尾必须把「确认目标没被改 + 摘掉运行标记」放在同一把锁里，
-        // 否则用户恰好在这一瞬间又点了别的尺寸，这次点击会被悄悄丢掉。
-        // 锁顺序固定为 goals → running，和上面的 drive_size 一致，不会死锁。
-        let mut goals = size_goals().lock().unwrap_or_else(|p| p.into_inner());
-        let unchanged = goals.get(&label).is_some_and(|latest| {
-            (latest.width - goal.width).abs() < 0.01 && (latest.height - goal.height).abs() < 0.01
-        });
-        if !unchanged {
-            drop(goals);
-            continue; // 目标变了，继续追
-        }
-        let mut running = size_running().lock().unwrap_or_else(|p| p.into_inner());
-        running.remove(&label);
-        goals.remove(&label);
-        break;
     });
 }
 
 /// 按折叠状态调整窗口高度（宽度不变），带一小段高度动画
-pub fn apply_collapsed(window: &WebviewWindow, collapsed: bool, height: f64) {
-    let Ok(size) = window.inner_size() else {
-        return;
-    };
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let width = if scale > 0.0 {
-        size.width as f64 / scale
-    } else {
-        DEFAULT_WIDTH
-    };
+pub fn apply_collapsed(window: &WebviewWindow, collapsed: bool, width: f64, height: f64) {
     let to = if collapsed { COLLAPSED_HEIGHT } else { height };
     drive_size(window, width, to);
 }
@@ -600,9 +710,15 @@ pub fn open_note_window(
     note: &Note,
     focus: bool,
 ) -> Result<WebviewWindow, String> {
+    let started = Instant::now();
     let label = note_label(&note.id);
+    crate::boot_log(&format!(
+        "open_note_window {label}: begin focus={focus} pinned={}",
+        note.pinned
+    ));
 
     if let Some(window) = app.get_webview_window(&label) {
+        crate::boot_log(&format!("open_note_window {label}: reuse"));
         let _ = window.set_always_on_top(note.pinned);
         if focus {
             restore_and_focus(&window);
@@ -610,14 +726,25 @@ pub fn open_note_window(
         } else if window.is_minimized().unwrap_or(false) {
             let _ = window.unminimize();
         }
-        let _ = window.show();
+        window
+            .show()
+            .map_err(|err| format!("显示便签窗口失败：{err}"))?;
         if let Some(store) = app.try_state::<Store>() {
             store.emit_note_focus(app, &note.id);
         }
+        crate::boot_log(&format!(
+            "open_note_window {label}: shown elapsed_ms={} visible={:?} minimized={:?}",
+            started.elapsed().as_millis(),
+            window.is_visible(),
+            window.is_minimized()
+        ));
         return Ok(window);
     }
 
     let (x, y, width, height) = note_geometry(app, note);
+    crate::boot_log(&format!(
+        "open_note_window {label}: build begin x={x} y={y} width={width} height={height}"
+    ));
     let url = format!("index.html?surface=sticky&id={}", encode(&note.id));
     let builder = WebviewWindowBuilder::new(app, label.as_str(), WebviewUrl::App(url.into()))
         .title(note.window_title())
@@ -636,17 +763,34 @@ pub fn open_note_window(
         .always_on_top(note.pinned)
         .visible(false)
         .focused(focus)
+        .on_page_load(|window, payload| {
+            crate::boot_log(&format!(
+                "note_page {}: event={:?}",
+                window.label(),
+                payload.event()
+            ));
+        })
         .additional_browser_args(WEBVIEW_ARGS);
 
     let window = builder
         .build()
         .map_err(|err| format!("创建便签窗口失败：{err}"))?;
+    crate::boot_log(&format!(
+        "open_note_window {label}: build done elapsed_ms={}",
+        started.elapsed().as_millis()
+    ));
     window
         .show()
         .map_err(|err| format!("显示便签窗口失败：{err}"))?;
     if focus {
         raise_to_front(&window, note.pinned);
     }
+    crate::boot_log(&format!(
+        "open_note_window {label}: shown elapsed_ms={} visible={:?} minimized={:?}",
+        started.elapsed().as_millis(),
+        window.is_visible(),
+        window.is_minimized()
+    ));
     Ok(window)
 }
 
@@ -1353,35 +1497,66 @@ mod tests {
     }
 
     #[test]
-    fn 尺寸逼近不会越过目标且一定收敛() {
-        // 放大：每帧都朝目标走、不越过、未对齐时至少走 2px，最终精确等于目标
-        let mut current = 320.0_f64;
-        let target = 640.0_f64;
-        let mut frames = 0;
-        while (current - target).abs() > 0.001 {
-            let next = approach(current, target);
-            assert!(next >= current, "只能朝目标方向走");
-            assert!(next <= target, "不能越过目标");
-            if target - current > SIZE_SNAP {
-                assert!(
-                    next - current >= SIZE_SNAP - 0.001,
-                    "未对齐时每帧至少走 2px"
-                );
-            }
-            assert_ne!(next, current, "不能原地踏步");
-            current = next;
-            frames += 1;
-            assert!(frames < 200, "必须收敛");
+    fn 尺寸动画即使漏帧也按经过时间到达目标() {
+        let from = SizeGoal {
+            width: 320.0,
+            height: 500.0,
+        };
+        let to = SizeGoal {
+            width: 400.0,
+            height: 64.0,
+        };
+        let mut previous = from;
+        // 模拟中途原生调用停顿，不补跑已经错过的中间帧。
+        for millis in [0, 16, 32, 112, 160, 320] {
+            let next = sample_size(from, to, Duration::from_millis(millis), SIZE_DURATION);
+            assert!(next.width >= previous.width && next.width <= to.width);
+            assert!(next.height <= previous.height && next.height >= to.height);
+            previous = next;
         }
-        assert_eq!(current, target, "最后一帧要精确对齐");
+        assert_eq!(previous, to);
+        assert_eq!(sample_size(from, to, SIZE_DURATION, SIZE_DURATION), to);
+    }
 
-        // 缩小方向同样成立
-        let mut current = 640.0_f64;
-        while (current - 320.0).abs() > 0.001 {
-            let next = approach(current, 320.0);
-            assert!(next <= current && next >= 320.0, "不能越过目标");
-            current = next;
-        }
-        assert_eq!(current, 320.0);
+    #[test]
+    fn 连点改目标从当前尺寸起步且减少动效直接到位() {
+        let from = SizeGoal {
+            width: 320.0,
+            height: 380.0,
+        };
+        let first = SizeGoal {
+            width: 400.0,
+            height: 500.0,
+        };
+        let next = SizeGoal {
+            width: 280.0,
+            height: 330.0,
+        };
+        let current = sample_size(from, first, Duration::from_millis(48), SIZE_DURATION);
+        assert_eq!(
+            sample_size(current, next, Duration::ZERO, SIZE_DURATION),
+            current
+        );
+        assert_eq!(
+            sample_size(current, next, SIZE_DURATION, SIZE_DURATION),
+            next
+        );
+        assert_eq!(
+            sample_size(current, next, Duration::ZERO, Duration::ZERO),
+            next
+        );
+    }
+
+    #[test]
+    fn 重叠尺寸命令在最后一个保护释放后才允许记录宽高() {
+        let label = model::new_id("size-guard-test");
+        let first = begin_size_change(&label);
+        assert!(!first.was_changing());
+        let second = begin_size_change(&label);
+        assert!(second.was_changing());
+        drop(first);
+        assert!(is_size_changing(&label));
+        drop(second);
+        assert!(!is_size_changing(&label));
     }
 }

@@ -6,6 +6,7 @@ pub mod commands;
 pub mod hotkey;
 pub mod model;
 pub mod reminder;
+pub mod startup;
 pub mod store;
 pub mod tray;
 pub mod windows;
@@ -112,7 +113,7 @@ fn exe_boot_log_path() -> Option<PathBuf> {
 
 /// 启动后一个窗口都没能创建出来时的兜底提示。
 /// 桌面双击运行时没有控制台，静默失败用户只会觉得「点了没反应」，所以这里弹一个原生中文消息框。
-fn show_startup_failure(data_dir: &std::path::Path) {
+fn show_startup_failure(app: &AppHandle, data_dir: &std::path::Path) {
     let data_dir = data_dir.display().to_string();
     let log_path = exe_boot_log_path()
         .map(|path| path.display().to_string())
@@ -121,12 +122,14 @@ fn show_startup_failure(data_dir: &std::path::Path) {
         "setup: 没有任何窗口创建成功，弹出提示框 data_dir={data_dir} log={log_path}"
     ));
     let text = format!(
-        "小梦备忘录没能打开任何窗口，可能无法正常使用。\n\n数据目录：{data_dir}\n启动日志：{log_path}\n\n可以右键托盘图标退出后重新打开试试；如果还是不行，请把这个日志文件发给小梦。"
+        "小梦备忘录没能打开任何窗口。\n\n数据目录：{data_dir}\n启动日志：{log_path}\n\n关闭此提示后程序会退出。请将发布包完整解压到普通应用目录，再使用随附启动脚本重试；如果仍然失败，请保留启动日志。"
     );
     // 放到独立线程：消息框是阻塞的，别卡住主事件循环和托盘
+    let app = app.clone();
     std::thread::spawn(move || {
         native_message_box("小梦备忘录 · 启动失败", &text);
-        boot_log("setup: 启动失败提示框已关闭");
+        boot_log("setup: 启动失败提示框已关闭，退出以释放单实例和快捷键");
+        app.exit(1);
     });
 }
 
@@ -192,6 +195,11 @@ pub fn run() {
         std::env::var("APPDATA").unwrap_or_else(|_| "?".into()),
         std::env::temp_dir().display()
     ));
+    if let Some(message) = startup::launch_restriction() {
+        boot_log("startup: 受限启动，拒绝切换数据目录或进入常驻状态");
+        native_message_box("小梦备忘录 · 启动方式受限", message);
+        std::process::exit(1);
+    }
     let app = tauri::Builder::default()
         // 单实例必须第一个注册：第二次双击图标时唤起已有窗口
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -199,6 +207,10 @@ pub fn run() {
             std::thread::spawn(move || {
                 if let Err(err) = windows::open_panel(&app) {
                     log_line(format!("单实例唤起面板失败：{err}"));
+                    hotkey::show_failure(
+                        &app,
+                        "程序已经在运行，但这次没能显示管理面板。\n请从托盘退出后，用随程序提供的启动脚本重新打开。具体原因已记入日志。",
+                    );
                 }
             });
         }))
@@ -237,9 +249,6 @@ pub fn run() {
                 log_line(format!("托盘创建失败：{err}"));
             }
             boot_log("setup: tray done");
-            if let Err(err) = hotkey::apply_all(&handle, &settings) {
-                log_line(format!("默认快捷键注册失败：{err}"));
-            }
             if settings.launch_on_startup {
                 if let Err(err) = commands::apply_autostart(&handle, true) {
                     log_line(format!("同步开机自启失败：{err}"));
@@ -278,10 +287,12 @@ pub fn run() {
                     }
                 }
                 // 首启标记立刻写回：设置页不再自动弹，用户需要时自己从托盘/面板打开
-                let mut updated = settings.clone();
-                updated.first_run_done = true;
-                if let Err(err) = handle.state::<Store>().save_settings(&handle, updated) {
-                    log_line(format!("写入首启标记失败：{err}"));
+                if visible_windows > 0 {
+                    let mut updated = settings.clone();
+                    updated.first_run_done = true;
+                    if let Err(err) = handle.state::<Store>().save_settings(&handle, updated) {
+                        log_line(format!("写入首启标记失败：{err}"));
+                    }
                 }
             } else if notes.is_empty() {
                 // 老用户把便签都删光了：给个面板，别让屏幕上什么都没有
@@ -293,7 +304,13 @@ pub fn run() {
 
             // 一个窗口都没起来 = 用户屏幕上什么都没有，只能弹消息框（日志、数据目录一起给）
             if visible_windows == 0 {
-                show_startup_failure(&store::data_dir());
+                show_startup_failure(&handle, &store::data_dir());
+                return Ok(());
+            }
+
+            // 窗口可用后再注册；启动失败的后台实例不能占住快捷键。
+            if let Err(err) = hotkey::apply_all(&handle, &settings) {
+                hotkey::report_registration_failure(&handle, &err);
             }
 
             reminder::spawn(&handle);

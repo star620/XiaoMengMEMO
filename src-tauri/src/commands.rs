@@ -105,9 +105,14 @@ pub async fn set_note_collapsed(
     collapsed: bool,
 ) -> Result<Note, String> {
     let store = app.state::<Store>();
-    // 折叠前先量一下当前窗口高度，交给 store 记住：展开时要按这个高度还原
-    let expanded_height = app
-        .get_webview_window(&windows::note_label(&id))
+    let window = app.get_webview_window(&windows::note_label(&id));
+    let change = window
+        .as_ref()
+        .map(|window| windows::begin_size_change(window.label()));
+    // 只有稳定窗口能提供展开高度；动画中连点时以 Store 中的目标尺寸为准。
+    let expanded_height = window
+        .as_ref()
+        .filter(|_| change.as_ref().is_some_and(|change| !change.was_changing()))
         .and_then(|window| {
             let scale = window
                 .scale_factor()
@@ -120,12 +125,13 @@ pub async fn set_note_collapsed(
                 .map(|size| size.height as f64 / scale)
         });
     let note = store.set_collapsed(&app, &id, collapsed, expanded_height)?;
-    if let Some(window) = app.get_webview_window(&windows::note_label(&id)) {
+    if let Some(window) = window {
+        let width = note.width.unwrap_or(windows::DEFAULT_WIDTH);
         let height = note
             .height
             .unwrap_or(windows::DEFAULT_HEIGHT)
             .max(windows::MIN_HEIGHT);
-        windows::apply_collapsed(&window, collapsed, height);
+        windows::apply_collapsed(&window, collapsed, width, height);
     }
     Ok(note)
 }
@@ -139,9 +145,18 @@ pub async fn set_note_size(
     height: f64,
 ) -> Result<Note, String> {
     let store = app.state::<Store>();
+    let window = app.get_webview_window(&windows::note_label(&id));
+    let _change = window
+        .as_ref()
+        .map(|window| windows::begin_size_change(window.label()));
     let note = store.set_note_size(&app, &id, width, height)?;
-    if let Some(window) = app.get_webview_window(&windows::note_label(&id)) {
-        windows::apply_size(&window, width, height);
+    if let Some(window) = window {
+        let visible_height = if note.collapsed {
+            windows::COLLAPSED_HEIGHT
+        } else {
+            height
+        };
+        windows::apply_size(&window, width, visible_height);
     }
     Ok(note)
 }

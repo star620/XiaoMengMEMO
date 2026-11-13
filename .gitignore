@@ -11,6 +11,7 @@ target-check/
 *.nsis.zip
 
 # 本地数据、密钥与日志
+/data/
 *.log
 .env
 .env.*
@@ -23,6 +24,9 @@ tools/cert/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 本地想法池（只在本地记录，不进仓库）
+TODO.md
 
 # 调试截图（仓库里只保留 assets/screenshots 的样例图）
 .shots/

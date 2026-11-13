@@ -1,13 +1,55 @@
 //! 全局快捷键：Ctrl+Alt+N 新建备忘、Ctrl+Alt+M 打开管理面板、Ctrl+Alt+Space 快速记录
 //! （三个都能在设置里改，改成空串表示不启用）。
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Instant;
+
 use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 use crate::log_line;
 use crate::model::{NoteKind, Settings};
 use crate::store::Store;
 use crate::windows;
+
+static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
+static FAILURE_VISIBLE: AtomicBool = AtomicBool::new(false);
+
+struct HotkeyTrace {
+    request: u64,
+    started: Instant,
+}
+
+impl HotkeyTrace {
+    fn log(&self, stage: impl AsRef<str>) {
+        crate::boot_log(&format!(
+            "hotkey req={} elapsed_ms={} {}",
+            self.request,
+            self.started.elapsed().as_millis(),
+            stage.as_ref()
+        ));
+    }
+}
+
+pub(crate) fn show_failure(app: &AppHandle, message: &str) {
+    if FAILURE_VISIBLE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    app.dialog()
+        .message(message)
+        .title("小梦备忘录")
+        .kind(MessageDialogKind::Error)
+        .show(|_| FAILURE_VISIBLE.store(false, Ordering::Relaxed));
+}
+
+pub fn report_registration_failure(app: &AppHandle, error: &str) {
+    log_line(format!("默认快捷键注册失败：{error}"));
+    show_failure(
+        app,
+        "有些快捷键暂时没能启用，可能正被其他程序使用。\n可以从托盘打开设置，换一个组合再试。",
+    );
+}
 
 /// 注册（或重新注册）全部全局快捷键：先全部注销，再按设置逐个注册。
 /// 空字符串表示「这个快捷键不启用」。
@@ -19,6 +61,7 @@ pub fn apply_all(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     }
     // 三个快捷键如果被写成同一个组合，只注册一次，否则后面的必定注册失败
     let mut seen: Vec<String> = Vec::new();
+    let mut errors = Vec::new();
     let entries = [
         (settings.hotkey_new_note.trim(), "新建便签"),
         (settings.hotkey_show_panel.trim(), "打开面板"),
@@ -28,10 +71,16 @@ pub fn apply_all(app: &AppHandle, settings: &Settings) -> Result<(), String> {
         if accel.is_empty() || seen.iter().any(|registered| registered.as_str() == accel) {
             continue;
         }
-        register_one(app, accel, what)?;
         seen.push(accel.to_string());
+        if let Err(err) = register_one(app, accel, what) {
+            errors.push(err);
+        }
     }
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
 }
 
 fn register_one(app: &AppHandle, accel: &str, what: &str) -> Result<(), String> {
@@ -45,7 +94,9 @@ fn register_one(app: &AppHandle, accel: &str, what: &str) -> Result<(), String> 
         .map_err(|err| format!("{what}快捷键「{accel}」写法不对：{err}"))?;
     app.global_shortcut()
         .register(accel)
-        .map_err(|err| format!("{what}快捷键「{accel}」注册失败，可能被其他软件占用：{err}"))
+        .map_err(|err| format!("{what}快捷键「{accel}」注册失败，可能被其他软件占用：{err}"))?;
+    crate::boot_log(&format!("hotkey registered action={what} shortcut={accel}"));
+    Ok(())
 }
 
 /// 插件回调：先认出按下的是哪个快捷键，再分发；只响应按下（不是松开）
@@ -53,45 +104,83 @@ pub fn on_hotkey_state(app: &AppHandle, shortcut: &Shortcut, state: ShortcutStat
     if state != ShortcutState::Pressed {
         return;
     }
+    let trace = HotkeyTrace {
+        request: NEXT_REQUEST.fetch_add(1, Ordering::Relaxed),
+        started: Instant::now(),
+    };
+    // 必须先于 settings() 的 Store 锁：没有后续记录时才能区分等锁和没收到按键。
+    trace.log(format!("received shortcut={shortcut:?}"));
     let settings = app.state::<Store>().settings();
+    trace.log("settings_loaded");
     let note: Option<Shortcut> = settings.hotkey_new_note.trim().parse().ok();
     let panel: Option<Shortcut> = settings.hotkey_show_panel.trim().parse().ok();
     let quick: Option<Shortcut> = settings.hotkey_quick.trim().parse().ok();
     if note.as_ref() == Some(shortcut) {
-        on_hotkey_pressed(app);
+        trace.log("dispatch=new_note");
+        on_hotkey_pressed(app, trace);
     } else if panel.as_ref() == Some(shortcut) {
         on_panel_pressed(app);
     } else if quick.as_ref() == Some(shortcut) {
         on_quick_pressed(app);
+    } else {
+        trace.log("ignored: shortcut does not match current settings");
     }
 }
 
-/// 按「新建」快捷键：在鼠标所在位置新建备忘并显示（不抢焦点，避免打断当前工作）
-pub fn on_hotkey_pressed(app: &AppHandle) {
+/// 用户主动按「新建」快捷键：新建后提到前台，方便马上开始写。
+fn on_hotkey_pressed(app: &AppHandle, trace: HotkeyTrace) {
     let app = app.clone();
     std::thread::spawn(move || {
+        trace.log("worker_started");
         let store = app.state::<Store>();
         let at = cursor_logical(&app);
+        trace.log(format!("create_note begin at={at:?}"));
         let note = match store.create_note(&app, NoteKind::Memo, at) {
             Ok(note) => note,
             Err(err) => {
-                log_line(format!("快捷键新建便签失败：{err}"));
+                trace.log(format!("create_note failed: {err}"));
+                log_line(format!(
+                    "快捷键新建便签失败（req={}）：{err}",
+                    trace.request
+                ));
+                show_failure(&app, "这次没能保存便签，请稍后再试。\n具体原因已记入日志。");
                 return;
             }
         };
-        if let Err(err) = windows::open_note_window(&app, &note, false) {
-            log_line(format!("快捷键打开便签窗口失败：{err}"));
+        trace.log(format!("create_note done note={}", note.id));
+        match windows::open_note_window(&app, &note, true) {
+            Ok(window) => trace.log(format!(
+                "open_note done note={} visible={:?} minimized={:?} focused={:?} pos={:?} size={:?}",
+                note.id,
+                window.is_visible(),
+                window.is_minimized(),
+                window.is_focused(),
+                window.outer_position(),
+                window.inner_size()
+            )),
+            Err(err) => {
+                trace.log(format!("open_note failed note={}: {err}", note.id));
+                log_line(format!("快捷键打开便签窗口失败（req={}）：{err}", trace.request));
+                show_failure(
+                    &app,
+                    "便签已经记下了，这次没能显示出来。\n可以从托盘打开管理面板，找到刚才的便签。",
+                );
+            }
         }
     });
 }
 
 /// 按「面板」快捷键：打开管理面板并聚焦。
-/// 用户是按快捷键主动要它，所以这一次要抢焦点（和便签的「不抢焦点」相反）。
+/// 用户主动打开的窗口需要提到前台。
 pub fn on_panel_pressed(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         if let Err(err) = windows::open_panel(&app) {
             log_line(format!("快捷键打开面板失败：{err}"));
+            show_failure(
+                &app,
+                "这次没能打开管理面板，请从托盘再试一次。\n具体原因已记入日志。",
+            );
         }
     });
 }
@@ -102,6 +191,10 @@ pub fn on_quick_pressed(app: &AppHandle) {
     std::thread::spawn(move || {
         if let Err(err) = windows::open_quick(&app) {
             log_line(format!("快捷键打开快速记录失败：{err}"));
+            show_failure(
+                &app,
+                "这次没能打开快速记录，请稍后再试。\n具体原因已记入日志。",
+            );
         }
     });
 }

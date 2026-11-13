@@ -71,10 +71,27 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     reveal: !!note.reveal,
   };
   let dirty = false;
-  /** 窗口尺寸动画期间的时间戳上限：在此之前不记录窗口尺寸（见 watchWindowState） */
-  let holdWindowSizeUntil = 0;
-  /** 缩放动画期间给纸面加 data-resizing，动画结束后清掉（task-26） */
-  let resizeTimer = 0;
+  /** 忽略较早的异步响应，防止连点时把最新选择改回去。 */
+  let collapseRequest = 0;
+  let sizeRequest = 0;
+  let windowChanges: Promise<void> = Promise.resolve();
+  let pendingWindowChanges = 0;
+
+  /** 折叠和尺寸共用队列，让后端收到的顺序与点击顺序一致。 */
+  function queueWindowChange<T>(change: () => Promise<T>): Promise<T> {
+    pendingWindowChanges += 1;
+    const result = windowChanges.then(change).finally(() => {
+      pendingWindowChanges -= 1;
+    });
+    windowChanges = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  function localWindowState(revision: number): Partial<Pick<Note, "width" | "height" | "collapsed">> {
+    return pendingWindowChanges > 0 || revision !== collapseRequest + sizeRequest
+      ? { width: draft.width, height: draft.height, collapsed: draft.collapsed }
+      : {};
+  }
   /**
    * 用户刚点过的那一档尺寸：窗口动画期间量到的宽度是中间帧，
    * 高亮以 intent 为准，等窗口真的到位（或超时）再交还给实际宽度。
@@ -277,11 +294,13 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     dirty = false;
     saving = true;
     let failed = false;
+    const windowRevision = collapseRequest + sizeRequest;
     try {
       const saved = await api.saveNote({ ...draft, updated_at: Date.now() });
       if (!dirty) {
         draft = {
           ...saved,
+          ...localWindowState(windowRevision),
           repeat: saved.repeat ?? "",
           todos: saved.todos.map((t) => ({ ...t })),
           items: (saved.items ?? []).map((item) => ({ ...item })),
@@ -1009,30 +1028,27 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
   /** 收起 / 展开：窗口高度由后端改（apply_collapsed），这里只管纸面状态 */
   async function toggleCollapsed(next = !draft.collapsed): Promise<void> {
     if (next === draft.collapsed) return;
-    // 收起/展开是高度变化，不要带尺寸切换那层模糊
-    if (resizeTimer) window.clearTimeout(resizeTimer);
-    resizeTimer = 0;
-    noteEl.removeAttribute("data-resizing");
+    const request = ++collapseRequest;
+    const previous = draft.collapsed;
     closePopover();
-    // 窗口高度动画期间（和改三档尺寸时）会连续触发 resize，这段时间量到的高度
-    // 是中间帧，写进便签数据就会把"记忆高度"污染成 73 / 120 这种值。
-    holdWindowSizeUntil = Date.now() + 400;
     draft.collapsed = next;
     noteEl.dataset.collapsed = next ? "1" : "0";
     updateMenuItems();
     try {
-      const saved = await api.setNoteCollapsed(draft.id, next);
+      const saved = await queueWindowChange(() => api.setNoteCollapsed(draft.id, next));
+      if (request !== collapseRequest) return;
       // 只同步后端算出来的字段，别把草稿里还没保存的改动覆盖掉
       draft.collapsed = saved.collapsed;
       draft.updated_at = saved.updated_at;
       noteEl.dataset.collapsed = saved.collapsed ? "1" : "0";
     } catch (error) {
       console.error("收起便签失败", error);
-      draft.collapsed = !next;
+      if (request !== collapseRequest) return;
+      draft.collapsed = previous;
       noteEl.dataset.collapsed = draft.collapsed ? "1" : "0";
       toast("收起失败");
     } finally {
-      updateMenuItems();
+      if (request === collapseRequest) updateMenuItems();
     }
   }
 
@@ -1735,18 +1751,27 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     if (sizeItem?.dataset.size) {
       const preset = SIZE_PRESETS.find((p) => p.key === sizeItem.dataset.size);
       if (preset) {
-        // 缩放动画期间让纸面轻轻虚一下，盖住窗口重排的卡顿感（每次点击重新计时）
-        noteEl.dataset.resizing = "1";
-        if (resizeTimer) window.clearTimeout(resizeTimer);
-        resizeTimer = window.setTimeout(() => {
-          noteEl.removeAttribute("data-resizing");
-          resizeTimer = 0;
-        }, 260);
+        const request = ++sizeRequest;
+        const previous = { width: draft.width, height: draft.height };
         draft.width = preset.width;
         draft.height = preset.height;
-        holdWindowSizeUntil = Date.now() + 500;
         // 只发一次：窗口动画由后端「最后一次点击说了算」，前端不再补发 setNoteSize
-        void api.setNoteSize(draft.id, preset.width, preset.height).catch(() => undefined);
+        void queueWindowChange(() => api.setNoteSize(draft.id, preset.width, preset.height))
+          .then((saved) => {
+            if (request !== sizeRequest) return;
+            draft.width = saved.width;
+            draft.height = saved.height;
+            draft.updated_at = saved.updated_at;
+          })
+          .catch((error) => {
+            console.error("调整便签大小失败", error);
+            if (request !== sizeRequest) return;
+            draft.width = previous.width;
+            draft.height = previous.height;
+            clearSizeIntent();
+            updateSizeSeg();
+            toast("大小没能改好，请再试一次");
+          });
         // 高亮立刻跟手；实际宽度到位或 800ms 超时后自动回到实测值
         rememberSizeIntent(preset.key);
         scheduleScrollState();
@@ -1843,8 +1868,7 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     // 收起态窗口只有 64px 高，这是折叠形态、不是便签该记住的高度：
     // 存下去的话展开时会按 64 还原，便签就卡成一条矮条。收起期间不写位置/尺寸。
     if (draft.collapsed) return;
-    // 收起/展开/换档的窗口动画还没走完：这时的高度是中间帧，不能当成便签尺寸记下来
-    if (Date.now() < holdWindowSizeUntil) return;
+    // 动画期间宽高是否可写由后端状态决定，不用固定毫秒数猜动画是否结束。
     void api.saveWindowState(draft.id, state);
   });
 
@@ -2473,6 +2497,10 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
   // 启动 & 尺寸/字体变化后重算滚动状态（是否可滚、在顶/中/底）
   requestAnimationFrame(() => {
     requestAnimationFrame(updateScrollState);
+    // 新建的空便签已由原生窗口聚焦，页面就绪后把光标落到正文。
+    if (document.hasFocus() && draft.kind === "memo" && !draft.collapsed && !draft.title && !draft.content) {
+      focusEditor(true);
+    }
   });
   void document.fonts?.ready.then( () => updateScrollState);
   window.addEventListener("resize", scheduleScrollState);
@@ -2499,10 +2527,12 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     const active = document.activeElement;
     if (active && (active === editor || root.contains(active))) return;
     void (async () => {
+      const windowRevision = collapseRequest + sizeRequest;
       const fresh = (await api.getSnapshot()).notes.find((n) => n.id === draft.id);
       if (!fresh) return;
       draft = {
         ...fresh,
+        ...localWindowState(windowRevision),
         todos: fresh.todos.map((t) => ({ ...t })),
         items: (fresh.items ?? []).map((item) => ({ ...item })),
         reveal: !!fresh.reveal,
