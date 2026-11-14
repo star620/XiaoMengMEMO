@@ -45,3 +45,7 @@ IMPLEMENTATION_RETURN.patch
 
 # 内部文档与本地截图（只在本机流转，整个 docs/ 不进仓库）
 docs/
+
+# 本地启动脚本（只在本机用，不进仓库）
+*.cmd
+*.bat
