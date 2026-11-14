@@ -293,7 +293,7 @@ pub fn run() {
                 .iter()
                 .filter(|note| note_has_content(note))
                 .collect();
-            restore_list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            restore_list.sort_by_key(|note| std::cmp::Reverse(note.updated_at));
             restore_list.truncate(3);
             boot_log(&format!(
                 "setup: restoring {} of {} notes",
