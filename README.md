@@ -131,8 +131,8 @@ tools/          图标生成、字体子集化、构建与调试脚本
 版本号改在 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 三处（设置页显示的版本由 `package.json` 在构建时自动注入，不用再手改前端），提交后打标签：
 
 ```powershell
-git tag v0.2.4
-git push origin v0.2.4
+git tag v0.2.5
+git push origin v0.2.5
 ```
 
 `.github/workflows/release.yml` 会在 Windows 上编译、打出便携 exe 与安装包、生成 `SHA256SUMS.txt`，并自动发一个 Release。想先验证构建而不发版，去 Actions 里手动运行一次 Release 工作流即可（产物在 Artifacts 里）。

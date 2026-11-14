@@ -1,6 +1,6 @@
 [package]
 name = "xiaomeng-memo"
-version = "0.2.4"
+version = "0.2.5"
 description = "小梦备忘录（待办清单）"
 authors = ["xiaomeng"]
 edition = "2021"
