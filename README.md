@@ -128,7 +128,7 @@ tools/          图标生成、字体子集化、构建与调试脚本
 
 ### 发布新版本
 
-版本号改在 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 三处，提交后打标签：
+版本号改在 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 三处（设置页显示的版本由 `package.json` 在构建时自动注入，不用再手改前端），提交后打标签：
 
 ```powershell
 git tag v0.2.4
