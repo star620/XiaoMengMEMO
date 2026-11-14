@@ -144,6 +144,10 @@ git push origin v0.2.4
 - **提醒需要程序在跑**：建议打开开机自启，平时只关窗口、不退出程序。
 - **多屏混合缩放**：不同缩放比的多显示器下，记住的位置可能略有偏差。
 
+## 待办
+
+想过但先不做的功能与打磨项记在 [docs/BACKLOG.md](docs/BACKLOG.md)，包括暂缓的「密码保险箱」。真要做时以 Issue 为准。
+
 ## 反馈
 
 想法、bug、想加的功能都欢迎开 [Issue](https://github.com/star620/XiaoMengMEMO/issues)；提 PR 前请先跑通 `npm run build` 和 `cargo test`（CI 也会跑 `fmt` / `clippy`）。
