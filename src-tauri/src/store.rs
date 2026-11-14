@@ -280,6 +280,8 @@ impl Store {
         Snapshot {
             notes: state.notes.clone(),
             settings: state.settings.clone(),
+            // 前端用它拼 asset URL；目录本身可能还没建，路径先给出去
+            image_dir: self.dir().join("images").to_string_lossy().to_string(),
         }
     }
 
@@ -733,6 +735,14 @@ impl Store {
         Ok(note)
     }
 
+    /// 回收站里的完整便签（清理没人引用的图片时用：回收站里的图还要留着，能恢复）
+    pub fn trash_notes(&self) -> Vec<Note> {
+        self.lock_trash()
+            .iter()
+            .map(|entry| entry.note.clone())
+            .collect()
+    }
+
     /// 清空回收站，返回清掉的条数
     pub fn empty_trash(&self) -> Result<usize, String> {
         let mut trash = self.lock_trash();
@@ -939,19 +949,23 @@ impl Store {
         Ok(note)
     }
 
-    /// 导出全部便签到桌面：一份 Markdown（人看）+ 一份 JSON（备份 / 换电脑用）。
+    /// 导出全部便签到桌面：建一个文件夹，里面放 Markdown（人看）、JSON（备份 / 换电脑用），
+    /// 以及正文里引用到的图片（images/）。
     /// 返回 Markdown 文件的完整路径（前端拿去 toast / 展示），不是目录。
     pub fn export_notes(&self) -> Result<String, String> {
         let (notes, settings) = {
             let state = self.lock();
             (state.notes.clone(), state.settings.clone())
         };
-        let dir = desktop_dir();
-        fs::create_dir_all(&dir).map_err(|err| format!("创建导出目录失败：{err}"))?;
-        // 按任务书命名：小梦备忘录导出-20261111-1650.md / .json，直接放桌面
+        let desktop = desktop_dir();
+        fs::create_dir_all(&desktop).map_err(|err| format!("创建导出目录失败：{err}"))?;
+        // 每次导出建一个文件夹：小梦备忘录导出-20261111-1650/，md、json、images/ 都放里面，
+        // 这样 md 里的 ![](images/xxx.png) 用普通 Markdown 阅读器打开也能看到图
         let stamp = Local::now().format("%Y%m%d-%H%M").to_string();
-        let md_path = dir.join(format!("小梦备忘录导出-{stamp}.md"));
-        let json_path = dir.join(format!("小梦备忘录导出-{stamp}.json"));
+        let out_dir = unique_export_dir(&desktop, &stamp);
+        fs::create_dir_all(&out_dir).map_err(|err| format!("创建导出目录失败：{err}"))?;
+        let md_path = out_dir.join("小梦备忘录导出.md");
+        let json_path = out_dir.join("小梦备忘录导出.json");
 
         let mut md = String::new();
         md.push_str("# 小梦备忘录 · 导出\n\n");
@@ -1051,10 +1065,24 @@ impl Store {
             }
             md.push_str("---\n\n");
         }
+        // 图片跟着 md 走：复制到 <导出目录>/images/，并把 token 改写成 ![](images/xxx.png)
+        let (md, copied) =
+            crate::images::export_with_images(&md, &self.dir().join("images"), &out_dir);
+        if copied > 0 {
+            log_line(format!(
+                "导出：已把 {copied} 张图片复制到 {}",
+                out_dir.display()
+            ));
+        }
         // 导出文件也用原子写：写到一半断电不会留下半截文件，却骗用户说导出成功
         write_atomic(&md_path, md.as_bytes()).map_err(|err| format!("写入导出文件失败：{err}"))?;
 
-        let snapshot = Snapshot { notes, settings };
+        // 备份 JSON 里的 image_dir 留空：别把用户电脑的绝对路径写进备份文件
+        let snapshot = Snapshot {
+            notes,
+            settings,
+            image_dir: String::new(),
+        };
         let json = serde_json::to_vec_pretty(&snapshot)
             .map_err(|err| format!("序列化导出数据失败：{err}"))?;
         write_atomic(&json_path, &json).map_err(|err| format!("写入备份文件失败：{err}"))?;
@@ -1122,6 +1150,7 @@ impl Store {
         let mut snapshot = Snapshot {
             notes,
             settings: Settings::default(),
+            image_dir: String::new(),
         };
         sanitize(&mut snapshot);
 
@@ -1313,9 +1342,11 @@ impl Store {
 
     /// 写盘 + 每日备份
     fn persist(&self, state: &AppState) -> Result<(), String> {
+        // image_dir 是给前端拼 URL 用的运行时信息，不写进文件（避免把本机绝对路径存到 notes.json）
         let snapshot = Snapshot {
             notes: state.notes.clone(),
             settings: state.settings.clone(),
+            image_dir: String::new(),
         };
         let data =
             serde_json::to_vec_pretty(&snapshot).map_err(|err| format!("序列化数据失败：{err}"))?;
@@ -1446,6 +1477,22 @@ fn snapshot_stamp(name: &str) -> Option<u64> {
 }
 
 /// 桌面目录：中文 Windows 的桌面可能被 OneDrive 重定向，取不到就退回 %USERPROFILE%\Desktop
+/// 桌面导出目录：同一分钟导出两次时自动加 -2、-3，不覆盖上一次
+fn unique_export_dir(desktop: &Path, stamp: &str) -> PathBuf {
+    let base = format!("小梦备忘录导出-{stamp}");
+    let first = desktop.join(&base);
+    if !first.exists() {
+        return first;
+    }
+    for index in 2..100 {
+        let candidate = desktop.join(format!("{base}-{index}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    desktop.join(format!("{base}-{}", model::now_ms()))
+}
+
 fn desktop_dir() -> PathBuf {
     if let Ok(profile) = std::env::var("USERPROFILE") {
         let desktop = PathBuf::from(profile).join("Desktop");

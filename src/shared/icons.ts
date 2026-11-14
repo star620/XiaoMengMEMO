@@ -45,4 +45,10 @@ export const icons = {
   clipboard: wrap('<rect x="6" y="4.5" width="12" height="16" rx="2"/><path d="M9.5 4.5V3.2h5v1.3"/><path d="M9 10h6M9 13.5h6"/>'),
   /** 多选（虚线框 + 勾：面板工具栏进入多选模式） */
   select: wrap('<rect x="3.5" y="3.5" width="17" height="17" rx="4" stroke-dasharray="3.2 3"/><path d="M8.5 12.2 11 14.7l4.6-5.2"/>'),
+  /** 关闭（×，灯箱 / 关闭按钮） */
+  close: wrap('<path d="M6 6l12 12M18 6 6 18"/>'),
+  /** 左箭头（灯箱上一张） */
+  chevronLeft: wrap('<path d="M14.5 6 9 12l5.5 6"/>'),
+  /** 右箭头（灯箱下一张） */
+  chevronRight: wrap('<path d="M9.5 6 15 12l-5.5 6"/>'),
 } as const;

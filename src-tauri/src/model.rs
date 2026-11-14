@@ -213,13 +213,16 @@ impl Default for Settings {
     }
 }
 
-/// 一次取回给前端的数据：全部便签 + 设置
+/// 一次取回给前端的数据：全部便签 + 设置 + 图片目录
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     #[serde(default)]
     pub notes: Vec<Note>,
     #[serde(default)]
     pub settings: Settings,
+    /// 图片目录的绝对路径（前端拼 asset URL 用）；取不到时为空串
+    #[serde(default)]
+    pub image_dir: String,
 }
 
 /// create_note 的鼠标位置参数（逻辑像素）

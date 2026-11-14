@@ -15,7 +15,7 @@
    §15 滚动条   §16 减少动效   §17 无边框纸窗   §18 Markdown
    §19 收起 / 锁定 / 高亮   §20 版本层   §21 随身笔记   §22 差异视图
    §23 筛选条   §24 快速记录   §25 待办拖拽   §26 夜间纸色
-   §27 历史兼容别名（下一版删）
+   §27 历史兼容别名（下一版删）   §28 便签照片（相纸 / 灯箱 / 缩略图）
 
    颜色、字体、时长等「值」都在 tokens.css，这里只负责「怎么画」。
    ========================================================================== */
@@ -4889,4 +4889,444 @@ mark.xm-hit {
 /* 收起时「重置筛选」仍留在开关行右侧，保证筛选状态一直看得见、随手可清 */
 .xm-filters[data-open="0"] .xm-filters__clear {
   margin-left: auto;
+}
+
+/* ==========================================================================
+   28. 便签照片（相纸 / 灯箱 / 面板缩略图）
+   --------------------------------------------------------------------------
+   契约见 docs/images-contract.md §5。照片在正文里是一个 figure.xm-photo，
+   不是一张"网页图片"：先得有相纸的白边、厚度和一点点歪，再是图。
+   倾斜只用 transform，不参与布局；hover 时回正、抬起，像手指把照片按平。
+   夜间照片纸不跟着变深（照片是实物），只把外圈阴影加深；
+   但说明字印在近白相纸上，所以夜间反而要用深墨，不能用夜间正文的浅墨。
+
+   编号说明：契约里写的是 §24，但本文件 §24 已经是"快速记录"，
+   为不打乱旧节号，这里顺延为 §28；类名与 DOM 完全按契约。
+   ========================================================================== */
+
+/* ---------- 28.1 纸面照片 .xm-photo ---------- */
+.xm-photo {
+  /* 奇数 -1°、偶数 +0.8°：只差不到 2°，叠在便签的 -1.4° 上仍然像"随手放的"，
+     再大就会在 320 宽的窗口里露出太尖的角。用变量存角度，灯箱打开时好统一回正。 */
+  --xm-photo-rot: -1deg;
+  position: relative;
+  box-sizing: border-box;
+  /* 比正文窄 5px：旋转后四角会往外探，留这点余量才不会被滚动层的
+     overflow-x:hidden 切掉相纸角（320 宽的小窗里尤其明显）。 */
+  width: calc(100% - 5px);
+  max-width: 100%;
+  margin: 0.32em auto 0.7em;
+  /* 上/左/右 7px 白边，底部 6px + 说明那行，合起来约 26px 的"拍立得下边" */
+  padding: 7px 7px 6px;
+  border-radius: 3px;
+  background-color: #fffdf8;
+  background-image: linear-gradient(160deg, rgba(255, 255, 255, 0.92), rgba(255, 252, 242, 0.4));
+  /* 近处一道实影贴住便签，远处一道散影把相纸从纸面上"抬"起来 */
+  box-shadow:
+    0 1px 2px rgba(90, 70, 30, 0.16),
+    0 6px 14px -8px rgba(90, 70, 30, 0.35);
+  transform: rotate(var(--xm-photo-rot));
+  transform-origin: 50% 55%;
+  cursor: zoom-in;
+  transition:
+    transform 200ms var(--xm-ease-out),
+    box-shadow 200ms var(--xm-ease-out);
+}
+
+.xm-photo:nth-of-type(even) {
+  --xm-photo-rot: 0.8deg;
+}
+
+/* 鼠标放上去：回正 + 轻轻抬起。只改 transform / box-shadow，不推挤文字。 */
+.xm-photo:hover {
+  transform: rotate(0deg) translateY(-2px) scale(1.004);
+  box-shadow:
+    0 2px 4px rgba(90, 70, 30, 0.2),
+    0 12px 22px -10px rgba(90, 70, 30, 0.42);
+}
+
+/* 灯箱开着的时候纸面不再响应 hover：否则背景里的照片会在遮罩下面动，
+   看起来像界面在抖。 */
+html[data-xm-lightbox="1"] .xm-photo,
+html[data-xm-lightbox="1"] .xm-photo:hover {
+  transform: rotate(var(--xm-photo-rot));
+  box-shadow:
+    0 1px 2px rgba(90, 70, 30, 0.16),
+    0 6px 14px -8px rgba(90, 70, 30, 0.35);
+}
+
+.xm-photo__img {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: auto;
+  /* 限高保证一张便签里总还留得下几行字；长图按 object-fit:cover 裁中间，
+     不把整页正文挤到纸外。 */
+  max-height: 132px;
+  border-radius: 2px;
+  object-fit: cover;
+  background: #e8e0cf;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.xm-photo__cap {
+  margin: 6px 2px 0;
+  padding: 0 1px 1px;
+  font-family: var(--xm-font-hand);
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--xm-ink-meta);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 28.2 缺图占位 .xm-photo--missing ---------- */
+.xm-photo--missing {
+  border: 1px dashed rgba(120, 88, 20, 0.34);
+  padding: 6px;
+  background-color: #f7f0e1;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 1px 2px rgba(90, 70, 30, 0.1);
+  cursor: default;
+}
+.xm-photo--missing:hover {
+  transform: rotate(var(--xm-photo-rot));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 1px 2px rgba(90, 70, 30, 0.1);
+}
+.xm-photo__missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 92px;
+  padding: 18px 8px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.38);
+  color: var(--xm-ink-soft);
+  font-family: var(--xm-font-hand);
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  text-align: center;
+}
+
+/* ---------- 28.3 夜间：照片纸保持浅色，阴影加深 ---------- */
+[data-theme="night"] .xm-photo {
+  background-color: #f3ecdd;
+  background-image: linear-gradient(160deg, rgba(255, 255, 255, 0.72), rgba(240, 232, 214, 0.4));
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.5),
+    0 10px 24px -10px rgba(0, 0, 0, 0.78);
+}
+[data-theme="night"] .xm-photo:hover {
+  box-shadow:
+    0 2px 5px rgba(0, 0, 0, 0.55),
+    0 16px 30px -12px rgba(0, 0, 0, 0.85);
+}
+[data-theme="night"] .xm-photo__cap {
+  /* 相纸上还是深墨：夜间正文的浅墨印在近白相纸上会看不见 */
+  color: rgba(62, 50, 28, 0.76);
+}
+[data-theme="night"] .xm-photo--missing {
+  border-color: rgba(240, 225, 195, 0.32);
+  background-color: #e9e0cc;
+}
+[data-theme="night"] .xm-photo__missing {
+  background: rgba(255, 255, 255, 0.3);
+  color: rgba(62, 50, 28, 0.72);
+}
+
+/* ---------- 28.4 灯箱 .xm-lightbox ---------- */
+/* 挂到 document.body 上，fixed 盖住整个窗口；z-index 高于便签菜单（30） */
+.xm-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(24, 20, 12, 0.82);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  /* visibility 延迟到淡出结束再隐藏，关闭时不会"啪"一下消失 */
+  transition:
+    opacity 180ms var(--xm-ease-out),
+    visibility 0s linear 180ms;
+}
+.xm-lightbox[data-open="1"] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity 180ms var(--xm-ease-out),
+    visibility 0s linear 0s;
+}
+.xm-lightbox[hidden] {
+  display: none;
+}
+
+.xm-lightbox__stage {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  /* 给四周的控制按钮留出安全区；小窗口用 clamp 收窄，别把图压没 */
+  padding: clamp(48px, 7vh, 66px) clamp(42px, 8vw, 80px) clamp(42px, 6vh, 58px);
+  transform: scale(0.98);
+  transition: transform 180ms var(--xm-ease-out);
+}
+.xm-lightbox[data-open="1"] .xm-lightbox__stage {
+  transform: scale(1);
+}
+
+/* 大图本身做成一张更厚的相纸：四周白边 + 底部更宽的白边 */
+.xm-lightbox__img {
+  display: block;
+  box-sizing: border-box;
+  width: auto;
+  height: auto;
+  max-width: 86vw;
+  max-height: 78vh;
+  padding: 10px 10px 30px;
+  border-radius: 3px;
+  background: #fffdf8;
+  object-fit: contain;
+  box-shadow:
+    0 2px 6px rgba(20, 14, 4, 0.4),
+    0 36px 80px -20px rgba(0, 0, 0, 0.85);
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.xm-lightbox__cap {
+  max-width: 86vw;
+  margin: 0;
+  color: rgba(255, 246, 225, 0.9);
+  font-family: var(--xm-font-hand);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  overflow-wrap: anywhere;
+}
+.xm-lightbox__cap:empty {
+  display: none;
+}
+
+/* 计数 chip 在左上角（屏幕坐标系，不跟着图走） */
+.xm-lightbox__count {
+  position: absolute;
+  top: 18px;
+  left: 22px;
+  z-index: 3;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(26, 21, 12, 0.56);
+  box-shadow: inset 0 0 0 1px rgba(255, 239, 205, 0.22);
+  color: rgba(255, 248, 232, 0.92);
+  font-family: var(--xm-font-ui);
+  font-size: 11.5px;
+  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.4px;
+}
+
+/* 关闭 / 左右切换：圆形半透明底，hover 变亮；键盘焦点必须看得见 */
+.xm-lightbox__close,
+.xm-lightbox__prev,
+.xm-lightbox__next {
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(30, 25, 15, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(255, 239, 205, 0.22);
+  color: #fff4d8;
+  font-family: var(--xm-font-ui);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  transition:
+    background-color 140ms var(--xm-ease-out),
+    transform 140ms var(--xm-ease-out);
+}
+.xm-lightbox__close {
+  top: 16px;
+  right: 20px;
+}
+.xm-lightbox__prev {
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 26px;
+}
+.xm-lightbox__next {
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 26px;
+}
+.xm-lightbox__close:hover,
+.xm-lightbox__prev:hover,
+.xm-lightbox__next:hover {
+  background: rgba(58, 47, 27, 0.78);
+}
+.xm-lightbox__prev:hover {
+  transform: translateY(-50%) scale(1.06);
+}
+.xm-lightbox__next:hover {
+  transform: translateY(-50%) scale(1.06);
+}
+.xm-lightbox__close:active,
+.xm-lightbox__prev:active,
+.xm-lightbox__next:active {
+  background: rgba(74, 60, 34, 0.9);
+}
+.xm-lightbox__close:focus-visible,
+.xm-lightbox__prev:focus-visible,
+.xm-lightbox__next:focus-visible {
+  outline: 2px solid #f3c96f;
+  outline-offset: 2px;
+}
+.xm-lightbox__close svg,
+.xm-lightbox__prev svg,
+.xm-lightbox__next svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+[data-theme="night"] .xm-lightbox {
+  background: rgba(10, 8, 4, 0.9);
+}
+[data-theme="night"] .xm-lightbox__img {
+  background: #f6efdf;
+}
+
+/* ---------- 28.5 面板卡片缩略图 .xm-card__thumbs ---------- */
+/* 尺寸 48x36，一行最多 3 张。容器用 max-content 而不是 100%，
+   这样 +N 角标才能贴在"第三张"的右下角，而不是卡片右边。 */
+.xm-card__thumbs {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  max-width: 100%;
+  margin: 2px 0 6px;
+}
+.xm-card__thumb {
+  display: block;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 48px;
+  height: 36px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: #e8e0cf;
+  box-shadow:
+    inset 0 0 0 1px rgba(120, 88, 20, 0.2),
+    0 1px 2px rgba(96, 70, 14, 0.16);
+  -webkit-user-drag: none;
+  user-select: none;
+}
+/* +N 角标：叠在第三张缩略图的右下角。
+   契约里 data-count 是"总张数"，但 CSS 没法算 total-3，所以：
+   - 前端若写 data-extra，优先用它（推荐，显示正确的 +2）；
+   - 只有 data-count 时退回显示总数（4 张起），1~3 张不显示角标。 */
+.xm-card__thumbs::after {
+  content: none;
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  z-index: 1;
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: rgba(48, 38, 18, 0.82);
+  box-shadow: inset 0 0 0 1px rgba(255, 244, 214, 0.28);
+  color: #fff2cf;
+  font-family: var(--xm-font-ui);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  pointer-events: none;
+}
+.xm-card__thumbs[data-extra]::after {
+  content: "+" attr(data-extra);
+}
+.xm-card__thumbs:not([data-extra])[data-count]::after {
+  content: "+" attr(data-count);
+}
+/* 只有 1~3 张时不该有角标；没有 data-extra 的 4 张以上显示总数 */
+.xm-card__thumbs:not([data-extra])[data-count="1"]::after,
+.xm-card__thumbs:not([data-extra])[data-count="2"]::after,
+.xm-card__thumbs:not([data-extra])[data-count="3"]::after,
+.xm-card__thumbs[data-extra="0"]::after {
+  display: none;
+}
+
+[data-theme="night"] .xm-card__thumb {
+  background: #4a422b;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 239, 205, 0.18),
+    0 1px 2px rgba(0, 0, 0, 0.4);
+}
+[data-theme="night"] .xm-card__thumbs::after {
+  background: rgba(20, 16, 8, 0.86);
+  color: #ffe9b8;
+  box-shadow: inset 0 0 0 1px rgba(255, 239, 205, 0.22);
+}
+
+/* ---------- 28.6 尊重"减少动效" ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .xm-photo,
+  .xm-photo:hover,
+  .xm-lightbox,
+  .xm-lightbox__stage,
+  .xm-lightbox__close,
+  .xm-lightbox__prev,
+  .xm-lightbox__next {
+    transition: none;
+  }
+  .xm-lightbox__stage {
+    transform: none;
+  }
+  .xm-photo:hover {
+    transform: rotate(0deg);
+    box-shadow:
+      0 2px 4px rgba(90, 70, 30, 0.2),
+      0 12px 22px -10px rgba(90, 70, 30, 0.42);
+  }
+}
+
+
+/* 灯箱里用 hidden 属性隐藏的按钮/计数/说明必须真的消失（.xm-lightbox__prev 等自带 display） */
+.xm-lightbox__prev[hidden],
+.xm-lightbox__next[hidden],
+.xm-lightbox__count[hidden],
+.xm-lightbox__cap[hidden] {
+  display: none !important;
 }

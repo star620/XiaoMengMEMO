@@ -19,6 +19,14 @@ pub fn get_snapshot(app: AppHandle) -> Snapshot {
     app.state::<Store>().snapshot()
 }
 
+/// 存一张便签里的图片：data 是 base64（不带 data: 前缀），返回文件名 img_xxxx.png
+#[tauri::command]
+pub fn save_image(app: AppHandle, data: String) -> Result<String, String> {
+    // 图片和数据文件放同一个数据目录下，跟着数据走
+    let dir = app.state::<Store>().dir().join("images");
+    crate::images::save_in(&dir, &data)
+}
+
 #[tauri::command]
 pub fn save_note(app: AppHandle, note: Note) -> Result<Note, String> {
     app.state::<Store>().save_note(&app, note)
@@ -62,7 +70,16 @@ pub fn restore_note(app: AppHandle, id: String) -> Result<Note, String> {
 
 #[tauri::command]
 pub fn empty_trash(app: AppHandle) -> Result<usize, String> {
-    app.state::<Store>().empty_trash()
+    let store = app.state::<Store>();
+    let count = store.empty_trash()?;
+    if count > 0 {
+        // 彻底删掉之后，images/ 里没人引用的图片顺手清理（宁可不删，见 images::gc）
+        let removed = crate::images::gc(&store);
+        if removed > 0 {
+            log_line(format!("清空回收站后清理了 {removed} 张没人引用的图片"));
+        }
+    }
+    Ok(count)
 }
 
 // ---------- 窗口 ----------

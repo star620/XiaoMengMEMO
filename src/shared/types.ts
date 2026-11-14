@@ -85,6 +85,8 @@ export interface Settings {
 export interface Snapshot {
   notes: Note[];
   settings: Settings;
+  /** 图片目录绝对路径（拼 asset URL 用）；非桌面端或取不到时为空串（图片契约 §3.2） */
+  image_dir: string;
 }
 
 export type Surface = "sticky" | "panel" | "settings" | "reminder" | "quick";

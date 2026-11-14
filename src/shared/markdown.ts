@@ -9,6 +9,7 @@
  * 渲染态点回编辑时靠它把光标放到"点的那一块"对应的源码行行尾。
  */
 import { escapeHtml } from "./dom";
+import { IMG_LINE_RE, isImageLine } from "./images";
 
 
 /**
@@ -39,6 +40,7 @@ function inline(raw: string): string {
 
 /** 这一行是不是块的开始（段落遇到它就要收尾） */
 function startsBlock(line: string): boolean {
+  if (isImageLine(line)) return true;
   if (/^\s*```/.test(line)) return true;
   if (/^\s{0,3}#{1,3}\s+/.test(line)) return true;
   if (/^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) return true;
@@ -52,7 +54,7 @@ function startsBlock(line: string): boolean {
  * Markdown 源码 -> 安全的 HTML
  * 支持的块：# ~ ### 标题、- * + 无序列表、1. 有序列表、> 引用、--- 分隔线、``` 代码块、普通段落。
  */
-export function mdToHtml(src: string): string {
+export function mdToHtml(src: string, opts?: { imageUrl?: (name: string) => string }): string {
   const lines = String(src ?? "").replace(/\r\n?/g, "\n").split("\n");
   const out: string[] = [];
   let i = 0;
@@ -79,6 +81,30 @@ export function mdToHtml(src: string): string {
 
     // 空行：只起分段作用
     if (/^\s*$/.test(line)) {
+      i += 1;
+      continue;
+    }
+
+    // 图片：整行 token 才渲染成相纸照片（契约 §4.2）。
+    // 编辑态不经过这里——那时正文是纯文本，用户看到的仍是 token 原文。
+    const photo = IMG_LINE_RE.exec(line);
+    if (photo) {
+      const name = escapeHtml(photo[1]);
+      const caption = photo[2] ?? "";
+      const url = opts?.imageUrl?.(photo[1]) ?? "";
+      if (url) {
+        out.push(
+          '<figure class="xm-photo" data-md-line="' + i + '" data-img="' + name + '">' +
+            '<img class="xm-photo__img" src="' + escapeHtml(url) + '" alt="' + escapeHtml(caption) + '" loading="lazy" decoding="async" draggable="false">' +
+            (caption ? '<figcaption class="xm-photo__cap">' + escapeHtml(caption) + "</figcaption>" : "") +
+            "</figure>",
+        );
+      } else {
+        out.push(
+          '<figure class="xm-photo xm-photo--missing" data-md-line="' + i + '" data-img="' + name + '">' +
+            '<div class="xm-photo__missing">图片暂时打不开</div></figure>',
+        );
+      }
       i += 1;
       continue;
     }
@@ -173,6 +199,11 @@ export function mdToPlain(src: string): string {
       out.push(raw);
       continue;
     }
+    // 图片行不计入字数/摘要（契约 §4.3.6）；面板需要 [图片] 时自己先替换。
+    if (isImageLine(raw)) {
+      out.push("");
+      continue;
+    }
     if (/^\s*$/.test(raw)) {
       out.push("");
       continue;
@@ -199,5 +230,8 @@ export function mdToPlain(src: string): string {
 
 /** 内容是不是"空的"（只有空白或只有分隔线/空代码块） */
 export function mdIsEmpty(src: string): boolean {
+  // 只有图片的便签不算空：要让它能进入排版态显示照片
+  const lines = String(src ?? "").replace(/\r\n?/g, "\n").split("\n");
+  if (lines.some((line) => isImageLine(line))) return false;
   return mdToPlain(src).trim() === "";
 }

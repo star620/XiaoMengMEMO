@@ -29,6 +29,7 @@ import {
   todoProgress,
 } from "../shared/format";
 import { mdToPlain } from "../shared/markdown";
+import { imageNames, imageUrl, replaceImageLines } from "../shared/images";
 import { diffStats, diffText } from "../shared/diff";
 import type { DiffOp } from "../shared/diff";
 import { maskSecret, vaultCardRows, vaultTitle } from "../shared/vault";
@@ -354,20 +355,25 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     const restTodos = note.todos.length - shownTodos.length;
     if (restTodos > 0) todoText += "（还有 " + restTodos + " 项）";
     // memo 正文先去掉 Markdown 标记再上卡片：卡片是摘要，不该出现 # 和 **
-    const plain = note.kind === "memo" ? mdToPlain(note.content) : note.content;
+    // 图片 token（xmimg:...）单独走缩略图，不能算进摘要文字
+    const plain = note.kind === "memo" ? mdToPlain(replaceImageLines(note.content, "")) : note.content;
+    const imageCount = note.kind === "memo" ? imageNames(note.content).length : 0;
     // 随身笔记的卡片正文单独渲染（名字 + 打码），这里不放内容
     const bodyText = note.kind === "todo" ? todoText : note.kind === "vault" ? "" : plain.replace(/\s+/g, " ").trim();
     const firstLine = plain.split("\n").map((s) => s.trim()).find(Boolean) ?? "";
     const empty =
-      note.kind === "vault" ? !note.title.trim() && (note.items ?? []).length === 0 : note.title.trim() === "" && bodyText === "";
+      note.kind === "vault"
+        ? !note.title.trim() && (note.items ?? []).length === 0
+        : note.title.trim() === "" && bodyText === "" && imageCount === 0;
     const title =
       note.kind === "vault"
         ? note.title.trim() || vaultTitle(note)
-        : note.title.trim() || firstLine || (empty ? "（空便签）" : "无标题");
+        : note.title.trim() || firstLine || (imageCount > 0 ? "（图片）" : empty ? "（空便签）" : "无标题");
     return {
       note,
       title,
-      summary: empty ? "" : bodyText,
+      // 只有图片没有文字时，摘要位放一句「（图片）」，别让卡片空成一条
+      summary: empty ? "" : bodyText || (imageCount > 0 ? "（图片）" : ""),
       progress: note.kind === "todo" ? todoProgress(note.todos.filter((t) => t.done).length, note.todos.length) : "",
       reminder: note.reminder_at && !note.reminder_done ? reminderLabel(note.reminder_at) : "",
     };
@@ -499,7 +505,9 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
         textMatches(text, key),
       );
     }
-    return [note.title, note.content, ...note.todos.map((t) => t.text)].some((text) => textMatches(text, key));
+    // 搜索不看图片 token（否则搜 "xmimg" 会把所有带图的便签都命中）
+    const content = note.kind === "memo" ? replaceImageLines(note.content, "") : note.content;
+    return [note.title, content, ...note.todos.map((t) => t.text)].some((text) => textMatches(text, key));
   }
 
   function dayRange(offset: number): [number, number] {
@@ -1492,6 +1500,28 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
       vault = box;
     }
 
+    // 照片缩略图：最多 3 张，多出来的折成 +N（契约 §5.2）
+    let thumbs: HTMLElement | null = null;
+    if (view.note.kind === "memo") {
+      const names = imageNames(view.note.content);
+      if (names.length > 0) {
+        const strip = document.createElement("div");
+        strip.className = "xm-card__thumbs";
+        names.slice(0, 3).forEach((name) => {
+          const img = document.createElement("img");
+          img.className = "xm-card__thumb";
+          img.src = imageUrl(name);
+          img.alt = "";
+          img.loading = "lazy";
+          img.draggable = false;
+          strip.appendChild(img);
+        });
+        if (names.length > 3) strip.dataset.extra = String(names.length - 3);
+        else strip.dataset.count = String(names.length);
+        thumbs = strip;
+      }
+    }
+
     const text = document.createElement("p");
     text.className = "xm-card__text";
     text.innerHTML = highlight(view.summary, keyword());
@@ -1509,6 +1539,7 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
 
     foot.append(time, todos);
     if (vault) card.append(pick, head, vault, foot);
+    else if (thumbs) card.append(pick, head, thumbs, text, foot);
     else card.append(pick, head, text, foot);
     return card;
   }

@@ -21,6 +21,7 @@ import { repeatLabel } from "../shared/format";
 import { clearUndo, publishUndo } from "../shared/undo";
 import { copyText } from "../shared/clipboard";
 import { hasVaultContent, maskSecret, vaultAllText } from "../shared/vault";
+import { imageCaption, imageNames, imageUrl, replaceImageLines } from "../shared/images";
 import type { Note, Settings, TodoItem, VaultItem } from "../shared/types";
 
 /** 6 种纸色，顺序与设置页一致 */
@@ -965,7 +966,8 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
       // 字数按原文算：Markdown 标记（# - **）不计入，排版前后字数不变。
       // 编辑态用 DOM 里的实时文字（draft.content 要等 collect 才更新，否则字数会慢半秒）
       const source = mdRendered ? draft.content : editor.innerText.replace(/\u00a0/g, " ");
-      const len = mdToPlain(source).replace(/\s/g, "").length;
+      // 图片行只是 marker，不该算进字数（图片契约 §4.3-6）
+      const len = mdToPlain(replaceImageLines(source, "")).replace(/\s/g, "").length;
       metaEl.textContent = len > 0 ? len + " 字" : "";
     }
   }
@@ -1249,7 +1251,7 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     if (!editor || !mdEnabled() || mdIsEmpty(draft.content)) return;
     // 排版前后内容高度不一样：先记比例，排完按比例回到原处
     const ratio = scrollRatio();
-    editor.innerHTML = mdToHtml(draft.content);
+    editor.innerHTML = mdToHtml(draft.content, { imageUrl });
     editor.dataset.md = "1";
     editor.contentEditable = "false";
     noteEl.dataset.mdRendered = "1";
@@ -1366,22 +1368,310 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
       if (dirty) void saveNote(false);
       if (mdEnabled()) renderMarkdown();
     });
-    // 排版态下点正文 = 回到原文编辑，并把光标放到点到的那一行
+    // 排版态下点正文：点照片开灯箱（锁定便签也可以看大图），点文字回到原文编辑
     editor.addEventListener("click", (event) => {
-      if (draft.locked || !mdRendered) return;
+      if (!mdRendered) return;
+      const target = event.target as HTMLElement;
+      const photo = target.closest<HTMLElement>(".xm-photo");
+      if (photo?.dataset.img) {
+        event.preventDefault();
+        event.stopPropagation();
+        openLightbox(photo.dataset.img);
+        return;
+      }
+      if (draft.locked) return;
       event.preventDefault();
       event.stopPropagation();
       restoreFromClick(event.clientX, event.clientY);
     });
-    // 粘贴一律当纯文本，避免把网页样式带进便签
+    // 粘贴：图片 → 存盘后贴成照片；文字 → 当纯文本，避免把网页样式带进便签
     editor.addEventListener("paste", (event) => {
       const clipboard = (event as ClipboardEvent).clipboardData;
       if (!clipboard) return;
+      const image = imageFileFrom(clipboard);
+      if (image) {
+        event.preventDefault();
+        void attachImageFile(image);
+        return;
+      }
       event.preventDefault();
       document.execCommand("insertText", false, clipboard.getData("text/plain"));
       markDirty();
       scheduleSave();
       scheduleScrollState();
+      updateMeta();
+    });
+
+    // ---------- 8.6 便签照片：粘贴 / 拖入（图片契约 §4.3） ----------
+
+    /** 从剪贴板 / 拖拽数据里挑出第一张图片文件 */
+    function imageFileFrom(clipboard: DataTransfer | null): File | null {
+      if (!clipboard) return null;
+      for (const item of Array.from(clipboard.items ?? [])) {
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) return file;
+        }
+      }
+      for (const file of Array.from(clipboard.files ?? [])) {
+        if (file.type.startsWith("image/")) return file;
+      }
+      return null;
+    }
+
+    /** 后端 / 浏览器抛出来的错误都可能是字符串 */
+    function imageErrorText(error: unknown): string {
+      if (typeof error === "string" && error.trim()) return error;
+      if (error instanceof Error && error.message) return error.message;
+      return "贴图失败";
+    }
+
+    function readFileAsBase64(file: File): Promise<string> {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("读取图片失败"));
+        reader.onload = () => {
+          const result = String(reader.result ?? "");
+          const comma = result.indexOf(",");
+          resolve(comma >= 0 ? result.slice(comma + 1) : result);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    /** 光标前后是不是已经在行首/行尾：图片 token 必须独占一行，不够就补换行 */
+    function newlinesAroundCaret(): { before: string; after: string } {
+      const selection = window.getSelection();
+      if (!editor || !selection || selection.rangeCount === 0) return { before: "\n", after: "\n" };
+      const range = selection.getRangeAt(0);
+      const before = document.createRange();
+      before.setStart(editor, 0);
+      before.setEnd(range.startContainer, range.startOffset);
+      const after = document.createRange();
+      after.setStart(range.endContainer, range.endOffset);
+      after.setEnd(editor, editor.childNodes.length);
+      const beforeText = before.toString();
+      const afterText = after.toString();
+      return {
+        before: beforeText.length === 0 || beforeText.endsWith("\n") ? "" : "\n",
+        after: afterText.startsWith("\n") ? "" : "\n",
+      };
+    }
+
+    /** 把图片 token 插到光标处（渲染态会先退回原文），然后标脏保存 */
+    function insertImageToken(name: string, x?: number, y?: number): void {
+      if (!editor) return;
+      if (mdRendered) editMarkdown(undefined, false);
+      setEditing(true);
+      editor.focus();
+      let placed = false;
+      if (typeof x === "number" && typeof y === "number") {
+        const doc = document as Document & {
+          caretRangeFromPoint?: (px: number, py: number) => Range | null;
+        };
+        const range = doc.caretRangeFromPoint?.(x, y);
+        if (range && editor.contains(range.startContainer)) {
+          const selection = window.getSelection();
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          placed = true;
+        }
+      }
+      if (!placed) placeCaretAtSourceLine();
+      const around = newlinesAroundCaret();
+      document.execCommand("insertText", false, around.before + "![](xmimg:" + name + ")" + around.after);
+      markDirty();
+      scheduleSave();
+      scheduleScrollState();
+      updateMeta();
+      toast("图片已贴到便签上");
+    }
+
+    /** 图片文件 → 后端起名存盘 → 插 token */
+    async function attachImageFile(file: File, x?: number, y?: number): Promise<void> {
+      if (!editor) return;
+      if (draft.locked) {
+        toast("便签已锁定，先解锁再贴图");
+        return;
+      }
+      try {
+        const base64 = await readFileAsBase64(file);
+        const name = await api.saveImage(base64);
+        insertImageToken(name, x, y);
+      } catch (error) {
+        console.error("贴图失败", error);
+        toast(imageErrorText(error));
+      }
+    }
+
+    // ---------- 8.7 灯箱：点照片看大图（同便签内成册，←/→ 切换） ----------
+
+    let lightboxEl: HTMLElement | null = null;
+    let lightboxImg: HTMLImageElement | null = null;
+    let lightboxCap: HTMLElement | null = null;
+    let lightboxCount: HTMLElement | null = null;
+    let lightboxCloseBtn: HTMLButtonElement | null = null;
+    let lightboxPrevBtn: HTMLButtonElement | null = null;
+    let lightboxNextBtn: HTMLButtonElement | null = null;
+    let lightboxNames: string[] = [];
+    let lightboxIndex = 0;
+    let lightboxOpen = false;
+    let lightboxHideTimer = 0;
+
+    function ensureLightbox(): HTMLElement {
+      if (lightboxEl) return lightboxEl;
+      const box = document.createElement("div");
+      box.className = "xm-lightbox";
+      box.hidden = true;
+      box.dataset.open = "0";
+      box.setAttribute("role", "dialog");
+      box.setAttribute("aria-modal", "true");
+      box.setAttribute("aria-label", "便签照片");
+
+      const stage = document.createElement("div");
+      stage.className = "xm-lightbox__stage";
+      const img = document.createElement("img");
+      img.className = "xm-lightbox__img";
+      img.alt = "";
+      img.draggable = false;
+      stage.appendChild(img);
+      const cap = document.createElement("p");
+      cap.className = "xm-lightbox__cap";
+
+      const count = document.createElement("span");
+      count.className = "xm-lightbox__count";
+
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "xm-lightbox__close";
+      close.setAttribute("aria-label", "关闭");
+      close.innerHTML = icons.close;
+      const prev = document.createElement("button");
+      prev.type = "button";
+      prev.className = "xm-lightbox__prev";
+      prev.setAttribute("aria-label", "上一张");
+      prev.innerHTML = icons.chevronLeft;
+      const next = document.createElement("button");
+      next.type = "button";
+      next.className = "xm-lightbox__next";
+      next.setAttribute("aria-label", "下一张");
+      next.innerHTML = icons.chevronRight;
+
+      box.append(stage, count, cap, close, prev, next);
+      document.body.appendChild(box);
+
+      lightboxEl = box;
+      lightboxImg = img;
+      lightboxCap = cap;
+      lightboxCount = count;
+      lightboxCloseBtn = close;
+      lightboxPrevBtn = prev;
+      lightboxNextBtn = next;
+
+      close.addEventListener("click", () => closeLightbox());
+      prev.addEventListener("click", () => showLightboxAt(lightboxIndex - 1));
+      next.addEventListener("click", () => showLightboxAt(lightboxIndex + 1));
+      // 点背景关闭；点在图/说明/按钮上不关
+      box.addEventListener("click", (event) => {
+        const target = event.target as HTMLElement;
+        if (target === box || target === stage) closeLightbox();
+      });
+
+      // 捕获阶段拦键盘：灯箱开着时 Esc 只关灯箱，不能被下面的「退出编辑/关窗口」抢走
+      document.addEventListener(
+        "keydown",
+        (event) => {
+          if (!lightboxOpen) return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            closeLightbox();
+          } else if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            showLightboxAt(lightboxIndex - 1);
+          } else if (event.key === "ArrowRight") {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            showLightboxAt(lightboxIndex + 1);
+          }
+        },
+        true,
+      );
+      return box;
+    }
+
+    function showLightboxAt(index: number): void {
+      if (!lightboxEl || lightboxNames.length === 0) return;
+      lightboxIndex = (index + lightboxNames.length) % lightboxNames.length;
+      const name = lightboxNames[lightboxIndex];
+      const caption = imageCaption(draft.content, name);
+      if (lightboxImg) {
+        lightboxImg.src = imageUrl(name);
+        lightboxImg.alt = caption || "便签照片";
+      }
+      if (lightboxCap) {
+        lightboxCap.textContent = caption;
+        lightboxCap.hidden = !caption;
+      }
+      if (lightboxCount) {
+        lightboxCount.textContent = lightboxNames.length > 1 ? lightboxIndex + 1 + " / " + lightboxNames.length : "";
+        lightboxCount.hidden = lightboxNames.length < 2;
+      }
+      const many = lightboxNames.length > 1;
+      if (lightboxPrevBtn) lightboxPrevBtn.hidden = !many;
+      if (lightboxNextBtn) lightboxNextBtn.hidden = !many;
+    }
+
+    function openLightbox(name: string): void {
+      const names = imageNames(draft.content);
+      if (names.length === 0) return;
+      ensureLightbox();
+      lightboxNames = names;
+      lightboxOpen = true;
+      if (lightboxHideTimer) {
+        window.clearTimeout(lightboxHideTimer);
+        lightboxHideTimer = 0;
+      }
+      if (lightboxEl) {
+        lightboxEl.hidden = false;
+        lightboxEl.dataset.open = "1";
+      }
+      showLightboxAt(Math.max(0, names.indexOf(name)));
+      document.documentElement.dataset.xmLightbox = "1";
+      lightboxCloseBtn?.focus();
+    }
+
+    function closeLightbox(): void {
+      if (!lightboxEl || !lightboxOpen) return;
+      lightboxOpen = false;
+      lightboxEl.dataset.open = "0";
+      delete document.documentElement.dataset.xmLightbox;
+      const box = lightboxEl;
+      lightboxHideTimer = window.setTimeout(() => {
+        lightboxHideTimer = 0;
+        box.hidden = true;
+      }, 200);
+    }
+
+    // 拖图片文件进来 = 贴到落点（没有落点就贴到末尾）
+    bodyEl.addEventListener("dragover", (event) => {
+      const transfer = (event as DragEvent).dataTransfer;
+      if (!transfer) return;
+      const hasImage =
+        Array.from(transfer.items ?? []).some((item) => item.kind === "file" && item.type.startsWith("image/")) ||
+        Array.from(transfer.files ?? []).some((file) => file.type.startsWith("image/"));
+      if (!hasImage) return;
+      event.preventDefault();
+      transfer.dropEffect = "copy";
+    });
+    bodyEl.addEventListener("drop", (event) => {
+      const transfer = (event as DragEvent).dataTransfer;
+      const file = imageFileFrom(transfer);
+      if (!file) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void attachImageFile(file, event.clientX, event.clientY);
     });
   }
 

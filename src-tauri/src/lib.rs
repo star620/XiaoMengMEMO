@@ -1,9 +1,10 @@
 //! 小梦备忘录 · Rust 后端入口。
 //! 这里只做「装配」：初始化数据仓库、托盘、快捷键、提醒线程，并把全部命令和窗口事件接好。
-//! 具体实现分在 model / store / windows / tray / hotkey / reminder / commands 七个模块里。
+//! 具体实现分在 model / store / windows / tray / hotkey / reminder / images / commands 模块里。
 
 pub mod commands;
 pub mod hotkey;
+pub mod images;
 pub mod model;
 pub mod reminder;
 mod size_probe;
@@ -48,6 +49,19 @@ fn boot_log_paths() -> &'static Vec<PathBuf> {
         }
         paths
     })
+}
+
+/// 便签里到底有没有东西：开机只恢复「有内容」的便签（空便签留在面板里就行）。
+fn note_has_content(note: &model::Note) -> bool {
+    match note.kind {
+        model::NoteKind::Memo => !note.content.trim().is_empty() || !note.title.trim().is_empty(),
+        model::NoteKind::Todo => note.todos.iter().any(|item| !item.text.trim().is_empty()),
+        model::NoteKind::Vault => note.items.iter().any(|item| {
+            !item.label.trim().is_empty()
+                || !item.value.trim().is_empty()
+                || !item.note.trim().is_empty()
+        }),
+    }
 }
 
 /// 启动阶段诊断日志：同时写 exe 同目录、%TEMP%、%APPDATA%\XiaoMengMemo。
@@ -272,10 +286,23 @@ pub fn run() {
                 Err(err) => boot_log(&format!("setup: 面板驻留任务栏失败 {err}")),
             }
 
-            // 恢复上次没关掉的便签窗口（这里在 setup 里建窗是官方推荐做法）
+            // 恢复上次没关掉的便签窗口（这里在 setup 里建窗是官方推荐做法）。
+            // 只恢复最近 3 张「有内容」的便签（用户 m15261 的决定）：每张便签都是一个
+            // 独立 WebView2 渲染进程，十几张一起恢复既慢又吃内存；其余留在面板里随时能开。
+            let mut restore_list: Vec<&model::Note> = notes
+                .iter()
+                .filter(|note| note_has_content(note))
+                .collect();
+            restore_list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            restore_list.truncate(3);
+            boot_log(&format!(
+                "setup: restoring {} of {} notes",
+                restore_list.len(),
+                notes.len()
+            ));
             // 同时数一下到底有几个窗口真的起来了：一个都没有就是致命失败，后面要告诉用户
             let mut visible_windows = 0usize;
-            for note in notes.iter() {
+            for note in restore_list {
                 match windows::open_note_window(&handle, note, false) {
                     Ok(_) => visible_windows += 1,
                     Err(err) => log_line(format!("恢复便签窗口失败（{}）：{err}", note.id)),
@@ -387,6 +414,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
+            commands::save_image,
             commands::save_note,
             commands::delete_note,
             commands::list_trash,

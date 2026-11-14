@@ -1,6 +1,6 @@
 {
   "name": "xiaomeng-memo",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "小梦备忘录：轻量 Windows 桌面便利贴（Tauri 2 + TypeScript），随手记、置顶看、到点提醒。",
   "license": "MIT",
   "author": "星梦",

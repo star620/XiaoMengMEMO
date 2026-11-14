@@ -1,6 +1,6 @@
 [package]
 name = "xiaomeng-memo"
-version = "0.2.3"
+version = "0.2.4"
 description = "小梦备忘录（待办清单）"
 authors = ["xiaomeng"]
 edition = "2021"
@@ -14,7 +14,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# protocol-asset：便签里的照片走 http://asset.localhost 读本地 images/（见 tauri.conf.json assetProtocol）
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"

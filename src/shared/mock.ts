@@ -55,6 +55,39 @@ const DEFAULT_SETTINGS: Settings = {
 };
 
 
+/** 浏览器 mock 的图片仓库：文件名 -> data URL（契约 §4.5）。 */
+const mockImages = new Map<string, string>();
+
+/** 一张 300x200 的 SVG 占位照片：暖色窗景，别用 1x1 透明图，才能看清相纸排版。 */
+function svgPhoto(sky: string, windowColor: string, sun: string, caption: string): string {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200">' +
+    '<rect width="300" height="200" fill="' + sky + '"/>' +
+    '<rect x="34" y="28" width="232" height="128" rx="4" fill="' + windowColor + '" stroke="#a98a5a" stroke-width="3"/>' +
+    '<circle cx="216" cy="70" r="24" fill="' + sun + '" opacity=".92"/>' +
+    '<path d="M34 156 L110 104 L166 142 L214 112 L266 156 Z" fill="#7d9a6a" opacity=".85"/>' +
+    '<path d="M34 156 L266 156" stroke="#a98a5a" stroke-width="3"/>' +
+    '<text x="150" y="187" text-anchor="middle" font-size="12" fill="#6b5636" font-family="KaiTi, serif">' + caption + "</text>" +
+    "</svg>";
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+
+/** 种子便签里引用的两张图（文件名符合 img_[0-9a-f]{16}.png） */
+const SEED_PHOTO_1 = "img_5a1c9e7b3d2f4086.png";
+const SEED_PHOTO_2 = "img_c4d2a8f6b1e90357.png";
+mockImages.set(SEED_PHOTO_1, svgPhoto("#f4e2bd", "#cfe3ef", "#e9a53f", "窗台上的猫"));
+mockImages.set(SEED_PHOTO_2, svgPhoto("#e6ddc8", "#d8e8d0", "#d8b36a", "楼下的面包店"));
+
+/** 给 images.ts 用：浏览器里把文件名换成 data URL。 */
+export function __mockImageUrl(name: string): string {
+  return mockImages.get(name) ?? "";
+}
+
+// mock 模块加载时把解析器挂到全局，images.ts 就不用静态 import 整个 mock（保住独立 chunk）
+(globalThis as { __XM_MOCK_IMAGE_URL__?: (file: string) => string }).__XM_MOCK_IMAGE_URL__ =
+  __mockImageUrl;
+
+
 /** 把 localStorage 里可能缺字段的 items 洗成干净数组（老数据没有 items 就补空） */
 function normalizeItems(raw: unknown): VaultItem[] {
   if (!Array.isArray(raw)) return [];

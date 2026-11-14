@@ -11,6 +11,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "./env";
+import { setImageDir } from "./images";
 import type { Note, Settings, Snapshot, TodoItem, TrashItem, VaultItem } from "./types";
 
 /** 修改记录里的一条旧版本（契约 §14） */
@@ -79,8 +80,15 @@ function call<T>(cmd: string, args?: Args): Promise<T> {
 }
 
 export const api = {
-  getSnapshot: () => call<Snapshot>("get_snapshot"),
+  // 快照里带图片目录：统一在这里记下来，后面 imageUrl() 拼 asset 地址要用
+  getSnapshot: async () => {
+    const snapshot = await call<Snapshot>("get_snapshot");
+    setImageDir(snapshot.image_dir ?? "");
+    return snapshot;
+  },
   saveNote: (note: Note) => call<Note>("save_note", { note }),
+  /** 存一张图片（base64，不带 data: 前缀），返回文件名（图片契约 §3.1） */
+  saveImage: (data: string) => call<string>("save_image", { data }),
   deleteNote: (id: string) => call<void>("delete_note", { id }),
   /** 回收站：列表 / 恢复 / 清空（契约 §12.2） */
   listTrash: () => call<TrashItem[]>("list_trash"),
