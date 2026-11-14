@@ -43,6 +43,5 @@ RETURN-*.md
 REVIEW-*.md
 IMPLEMENTATION_RETURN.patch
 
-# 本地验收截图（只在本机看，不进仓库）
-docs/shots/
-docs/style-lab/
+# 内部文档与本地截图（只在本机流转，整个 docs/ 不进仓库）
+docs/

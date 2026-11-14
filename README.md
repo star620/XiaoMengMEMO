@@ -146,7 +146,7 @@ git push origin v0.2.4
 
 ## 待办
 
-想过但先不做的功能与打磨项记在 [docs/BACKLOG.md](docs/BACKLOG.md)，包括暂缓的「密码保险箱」。真要做时以 Issue 为准。
+想过但先不做的功能与打磨项记在本地的 `docs/BACKLOG.md`（`docs/` 目录不随仓库分发），包括暂缓的「密码保险箱」。真要做时以 Issue 为准。
 
 ## 反馈
 
