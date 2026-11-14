@@ -67,6 +67,13 @@ pub fn report_registration_failure(app: &AppHandle, error: &str) {
     );
 }
 
+/// 启动失败的后台实例把快捷键还回去，别让下一次正常启动注册不上。
+pub fn release_all(app: &AppHandle) {
+    if let Err(err) = app.global_shortcut().unregister_all() {
+        log_line(format!("释放快捷键失败：{err}"));
+    }
+}
+
 /// 注册（或重新注册）全部全局快捷键：先全部注销，再按设置逐个注册。
 /// 空字符串表示「这个快捷键不启用」。
 pub fn apply_all(app: &AppHandle, settings: &Settings) -> Result<(), String> {

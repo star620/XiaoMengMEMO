@@ -257,6 +257,21 @@ pub fn run() {
             }
             tray::set_visible(&handle, settings.show_tray);
 
+            // 快捷键 / 提醒线程 / 面板驻留先就位，再恢复便签窗口。
+            // 建 WebView 窗口是同步阻塞的：机器忙时 6 张便签能花掉两分钟，
+            // 若把这些放在后面，开机后 Ctrl+Alt+M 会长时间没反应，像是没启动（task-50）。
+            if let Err(err) = hotkey::apply_all(&handle, &settings) {
+                hotkey::report_registration_failure(&handle, &err);
+            }
+            reminder::spawn(&handle);
+            // 吸边对齐的轮询线程：便签被拖动后静默 120ms 再吸附
+            windows::spawn_snap_worker(&handle);
+            // 面板常驻任务栏：任务栏里始终有「小梦备忘录」按钮可点，但窗口不弹出来
+            match windows::ensure_panel_resident(&handle) {
+                Ok(_) => boot_log("setup: panel resident in taskbar"),
+                Err(err) => boot_log(&format!("setup: 面板驻留任务栏失败 {err}")),
+            }
+
             // 恢复上次没关掉的便签窗口（这里在 setup 里建窗是官方推荐做法）
             // 同时数一下到底有几个窗口真的起来了：一个都没有就是致命失败，后面要告诉用户
             let mut visible_windows = 0usize;
@@ -305,26 +320,12 @@ pub fn run() {
 
             // 一个窗口都没起来 = 用户屏幕上什么都没有，只能弹消息框（日志、数据目录一起给）
             if visible_windows == 0 {
+                // 快捷键前面已经注册过：失败实例不能占着，否则用户点「再开一次」也按不动
+                hotkey::release_all(&handle);
                 show_startup_failure(&handle, &store::data_dir());
                 return Ok(());
             }
 
-            // 窗口可用后再注册；启动失败的后台实例不能占住快捷键。
-            if let Err(err) = hotkey::apply_all(&handle, &settings) {
-                hotkey::report_registration_failure(&handle, &err);
-            }
-
-            reminder::spawn(&handle);
-            // 吸边对齐的轮询线程：便签被拖动后静默 120ms 再吸附
-            windows::spawn_snap_worker(&handle);
-
-            // 面板常驻任务栏：启动后确保面板窗口存在并最小化——任务栏里始终有
-            // 「小梦备忘录」按钮可点，但窗口不弹到桌面上、不抢焦点。
-            // 首启已经 open_panel 过，这里复用单例；失败只记日志，不影响启动。
-            match windows::ensure_panel_resident(&handle) {
-                Ok(_) => boot_log("setup: panel resident in taskbar"),
-                Err(err) => boot_log(&format!("setup: 面板驻留任务栏失败 {err}")),
-            }
             boot_log("setup: done");
             Ok(())
         })

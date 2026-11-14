@@ -116,9 +116,13 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     '<header class="xm-panel__head">' +
     '<input class="xm-search" type="search" placeholder="搜索便签… 支持拼音首字母" title="Ctrl + F" aria-label="搜索便签，支持拼音首字母" />' +
     "</header>" +
-    '<div class="xm-panel__actions">' +
+    '<div class="xm-panel__actions" data-more="0">' +
     '<button class="xm-btn xm-btn--primary" type="button" data-act="new-memo">' + icons.plus + " 备忘</button>" +
     '<button class="xm-btn xm-btn--primary" type="button" data-act="new-todo">' + icons.plus + " 待办</button>" +
+    // 「更多」：次要动作收进第二行，默认收起（task-50），点一下展开；收起时把回收站条数挪到这颗按钮上
+    '<button class="xm-btn xm-btn--ghost xm-more" type="button" data-act="more" aria-expanded="false" aria-controls="xm-panel-more" title="更多操作">' +
+    icons.more + '<span class="xm-more__text">更多</span></button>' +
+    '<div class="xm-panel__more" id="xm-panel-more" inert>' +
     '<button class="xm-btn" type="button" data-act="new-vault" title="新建随身笔记（名字 + 内容，点一下复制）">' +
     icons.plus + " 随身笔记</button>" +
     '<button class="xm-btn" type="button" data-act="from-clipboard" ' +
@@ -128,7 +132,15 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     '<button class="xm-btn xm-btn--icon" type="button" data-act="trash" title="回收站" aria-label="回收站">' + icons.trash + "</button>" +
     '<button class="xm-btn xm-btn--icon" type="button" data-act="settings" title="设置" aria-label="设置">' + icons.gear + "</button>" +
     "</div>" +
-    '<div class="xm-filters" data-on="0" role="group" aria-label="筛选便签">' +
+    "</div>" +
+    '<div class="xm-filters" data-on="0" data-open="0" role="group" aria-label="筛选便签">' +
+    '<div class="xm-filters__bar">' +
+    '<button class="xm-chip xm-filters__toggle" type="button" data-act="filters-toggle" aria-expanded="false" title="展开筛选">' +
+    icons.expand + '<span class="xm-filters__toggle-text">筛选</span></button>' +
+    // 只有 due/kind/color 真的在筛选时才出现（task-48：文案从「清除」改成「重置筛选」，只清筛选、不动搜索框）
+    '<button class="xm-filters__clear" type="button" data-act="filters-clear" hidden>重置筛选</button>' +
+    "</div>" +
+    '<div class="xm-filters__body" inert>' +
     '<div class="xm-filters__group" data-group="due" role="group" aria-label="按时间筛选">' +
     '<button class="xm-chip" type="button" data-due="all" data-active="1">全部</button>' +
     '<button class="xm-chip" type="button" data-due="today" data-active="0">今天</button>' +
@@ -145,8 +157,7 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     '<button class="xm-chip xm-chip--dot" type="button" data-color="all" data-active="1" title="全部颜色" aria-label="全部颜色"><i class="xm-chip__dot"></i>全色</button>' +
     NOTE_COLORS.map((color) => '<button class="xm-chip xm-chip--dot" type="button" data-color="' + color.key + '" data-active="0" title="' + color.label + '" aria-label="' + color.label + '"><i class="xm-chip__dot"></i></button>').join("") +
     "</div>" +
-    // 只有 due/kind/color 真的在筛选时才出现（task-48：文案从「清除」改成「重置筛选」，只清筛选、不动搜索框）
-    '<button class="xm-filters__clear" type="button" data-act="filters-clear" hidden>重置筛选</button>' +
+    "</div>" +
     "</div>" +
     '<div class="xm-panel__list" role="listbox" aria-label="便签列表"></div>' +
     // 多选批量条（task-48）：选中 ≥1 张时浮在列表和脚注之间；不显示时整条收起
@@ -243,10 +254,15 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   const clipboardBtn = body.querySelector<HTMLButtonElement>('[data-act="from-clipboard"]')!;
   const trashBtn = body.querySelector<HTMLButtonElement>('[data-act="trash"]')!;
   const settingsBtn = body.querySelector<HTMLButtonElement>('[data-act="settings"]')!;
+  // 「更多」折叠组（task-50）：次要动作默认收起，回收站条数挪到这颗按钮上当角标
+  const moreBtn = body.querySelector<HTMLButtonElement>('[data-act="more"]')!;
+  const morePanel = body.querySelector<HTMLElement>(".xm-panel__more")!;
   const toastEl = body.querySelector<HTMLElement>(".xm-toast")!;
   // 多选 / 批量条 / 右键菜单 / 提醒弹层（task-48）
   const selectBtn = body.querySelector<HTMLButtonElement>('[data-act="select"]')!;
   const filtersClearBtn = filtersEl.querySelector<HTMLButtonElement>('[data-act="filters-clear"]')!;
+  const filtersToggleBtn = filtersEl.querySelector<HTMLButtonElement>('[data-act="filters-toggle"]')!;
+  const filtersBody = filtersEl.querySelector<HTMLElement>(".xm-filters__body")!;
   const selbarEl = body.querySelector<HTMLElement>(".xm-selbar")!;
   const selCountEl = selbarEl.querySelector<HTMLElement>(".xm-selbar__count")!;
   const ctxEl = body.querySelector<HTMLElement>(".xm-ctx")!;
@@ -589,9 +605,67 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     }, left);
   }
 
+  // ---------- 折叠区（task-50）----------
+  /** 折叠状态记在本机，下次打开面板保持你上次的样子 */
+  const MORE_KEY = "xm.panel.more";
+  const FILTERS_KEY = "xm.panel.filters";
+  function readFlag(key: string): boolean {
+    try {
+      return localStorage.getItem(key) === "1";
+    } catch {
+      return false;
+    }
+  }
+  function writeFlag(key: string, on: boolean): void {
+    try {
+      localStorage.setItem(key, on ? "1" : "0");
+    } catch {
+      /* 隐私模式下写不了也无所谓，只是不记住 */
+    }
+  }
+
+  let trashCount = 0;
+  /** 回收站条数：展开时挂在回收站按钮上，收起时挪到「更多」按钮上（不重复显示） */
+  function syncMoreBadge(): void {
+    const collapsed = actionsEl.dataset.more !== "1";
+    if (collapsed && trashCount > 0) moreBtn.dataset.count = trashCount > 99 ? "99+" : String(trashCount);
+    else delete moreBtn.dataset.count;
+  }
+  /** 「更多」按钮的提示语：收起时把回收站条数带出来，否则收起后看不到那个数字 */
+  function syncMoreTitle(): void {
+    const open = actionsEl.dataset.more === "1";
+    const base = open ? "收起更多操作" : "更多操作";
+    moreBtn.title = trashCount > 0 ? base + " · 回收站 " + trashCount + " 条" : base;
+  }
+
+  function setMoreOpen(open: boolean, remember = true): void {
+    actionsEl.dataset.more = open ? "1" : "0";
+    moreBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    moreBtn.classList.toggle("xm-more--open", open);
+    // 收起时把里面的按钮移出可聚焦序列，键盘 Tab 不会跳进看不见的控件
+    if (open) morePanel.removeAttribute("inert");
+    else morePanel.setAttribute("inert", "");
+    syncMoreBadge();
+    syncMoreTitle();
+    if (remember) writeFlag(MORE_KEY, open);
+  }
+
+  function setFiltersOpen(open: boolean, remember = true): void {
+    filtersEl.dataset.open = open ? "1" : "0";
+    filtersToggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    filtersToggleBtn.title = open ? "收起筛选" : "展开筛选";
+    if (open) filtersBody.removeAttribute("inert");
+    else filtersBody.setAttribute("inert", "");
+    if (remember) writeFlag(FILTERS_KEY, open);
+  }
+
   // ---------- 渲染 ----------
   function updateTrashBadge(): void {
     const count = trashItems.length;
+    trashCount = count;
+    // 角标不只挂在回收站按钮上：收起时「更多」按钮也要显示同一个数字
+    syncMoreBadge();
+    syncMoreTitle();
     // 角标位置只有 14px 高，超过两位就截成「99+」（视觉 paper.css 的约定）。
     if (count > 0) trashBtn.dataset.count = count > 99 ? "99+" : String(count);
     else delete trashBtn.dataset.count;
@@ -615,6 +689,11 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   /** 筛选条的高亮和计数：计数会跟着搜索词、类型、颜色一起变，切到别处则整条隐藏 */
   function syncFilterBar(): void {
     filtersEl.dataset.on = filtersActive() ? "1" : "0";
+    // 「筛选」开关上的角标 = 启用了几项筛选，收起时也能一眼看出自己筛过东西
+    const activeFilters =
+      (filterDue === "all" ? 0 : 1) + (filterKind === "all" ? 0 : 1) + (filterColor === "all" ? 0 : 1);
+    if (activeFilters > 0) filtersToggleBtn.dataset.count = String(activeFilters);
+    else delete filtersToggleBtn.dataset.count;
     // 「重置筛选」只在真的筛过东西时出现，而且只清三个筛选芯片，不动搜索框（task-48）
     filtersClearBtn.hidden = !filtersActive();
     filtersEl.querySelectorAll<HTMLButtonElement>("[data-due]").forEach((btn) => {
@@ -2354,6 +2433,14 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   filtersEl.addEventListener("click", (event) => {
     if (mode !== "list") return;
     const target = event.target as HTMLElement;
+    if (target.closest('[data-act="filters-toggle"]')) {
+      setFiltersOpen(filtersEl.dataset.open !== "1");
+      return;
+    }
+    // 收起状态下动筛选：先展开，否则改完看不见自己选了哪一项
+    if (target.closest("[data-due], [data-kind], [data-color]") && filtersEl.dataset.open !== "1") {
+      setFiltersOpen(true, false);
+    }
     if (target.closest('[data-act="filters-clear"]')) {
       clearFilters();
       return;
@@ -2377,6 +2464,7 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     }
   });
 
+  moreBtn.addEventListener("click", () => setMoreOpen(actionsEl.dataset.more !== "1"));
   memoBtn.addEventListener("click", () => void createNote("memo"));
   clipboardBtn.addEventListener("click", () => void createFromClipboard());
   todoBtn.addEventListener("click", () => void createNote("todo"));
@@ -2637,7 +2725,12 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   });
 
   // ---------- 启动 ----------
+  // 折叠状态跟着上次走：第一次打开面板是收起的，只看到「备忘 / 待办 / 更多」
+  setMoreOpen(readFlag(MORE_KEY), false);
+  setFiltersOpen(readFlag(FILTERS_KEY), false);
   await loadAll();
+  // 带着筛选条件回来时（上次没清），筛选条自动展开，状态不藏
+  if (filtersActive()) setFiltersOpen(true, false);
   checkPendingUndo();
   // 浏览器 mock：便签页点「修改记录」后整页跳到面板，广播消息会错过，用 localStorage 请求补上
   const requestedHistory = readHistoryRequest();

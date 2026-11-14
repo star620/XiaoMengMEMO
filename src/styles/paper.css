@@ -1296,10 +1296,12 @@
 }
 
 /* 面板顶部「回收站」图标上的数字角标：暖黄底 + 墨字，≤2 位数字（更多由前端截断成 99+） */
-.xm-btn[data-act="trash"] {
+.xm-btn[data-act="trash"],
+.xm-btn[data-act="more"] {
   position: relative;
 }
-.xm-btn[data-act="trash"]::after {
+.xm-btn[data-act="trash"]::after,
+.xm-btn[data-act="more"]::after {
   content: attr(data-count);
   position: absolute;
   top: -3px;
@@ -1324,7 +1326,10 @@
 /* 没有数量（或 0）就不显示角标 */
 .xm-btn[data-act="trash"]:not([data-count])::after,
 .xm-btn[data-act="trash"][data-count=""]::after,
-.xm-btn[data-act="trash"][data-count="0"]::after {
+.xm-btn[data-act="trash"][data-count="0"]::after,
+.xm-btn[data-act="more"]:not([data-count])::after,
+.xm-btn[data-act="more"][data-count=""]::after,
+.xm-btn[data-act="more"][data-count="0"]::after {
   display: none;
 }
 
@@ -3293,7 +3298,7 @@ mark.xm-hit {
 /* 操作区现在有 备忘 / 待办 / 随身笔记 / 粘贴 / 回收站 / 齿轮 六个，
    420 宽必须一行放下：统一收一点内边距和字号，图标按钮保 30px 的可点面积。 */
 .xm-panel__actions {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 6px;
 }
 .xm-panel__actions .xm-btn {
@@ -4778,3 +4783,110 @@ mark.xm-hit {
 }
 
 
+
+
+/* ==========================================================================
+   23.5 面板顶部「更多」折叠组 / 筛选条折叠（task-50）
+   --------------------------------------------------------------------------
+   420 宽的面板里原来挤了 7 个按钮 + 3 组筛选芯片，第一屏几乎全是控件。
+   现在第一行只留 备忘 / 待办 / 更多，其余收进第二行；筛选芯片也默认收起。
+   折叠只用 max-height + opacity：没有高度动画库，也和整条纸的动效语言一致。
+   ========================================================================== */
+.xm-panel__more {
+  display: flex;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-height: 0;
+  margin-top: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    max-height var(--xm-dur-base, 180ms) var(--xm-ease-out, ease),
+    opacity var(--xm-dur-quick, 140ms) var(--xm-ease-out, ease),
+    margin-top var(--xm-dur-base, 180ms) var(--xm-ease-out, ease);
+}
+.xm-panel__actions[data-more="1"] .xm-panel__more {
+  max-height: 84px;
+  margin-top: 7px;
+  opacity: 1;
+}
+.xm-more {
+  gap: 4px;
+}
+.xm-more svg {
+  width: 15px;
+  height: 15px;
+}
+.xm-more--open {
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--xm-ink);
+  box-shadow: inset 0 0 0 1px rgba(120, 88, 20, 0.18);
+}
+
+/* 「筛选」开关：把三组芯片收进一行开关后面，选中数量做成小角标 */
+.xm-filters__bar {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  gap: 8px;
+}
+.xm-filters__toggle {
+  gap: 3px;
+  padding: 0 8px;
+}
+.xm-filters__toggle svg {
+  width: 12px;
+  height: 12px;
+  transition: transform var(--xm-dur-base, 180ms) var(--xm-ease-out, ease);
+}
+.xm-filters[data-open="1"] .xm-filters__toggle svg {
+  transform: rotate(180deg);
+}
+.xm-filters[data-on="1"] .xm-filters__toggle {
+  color: var(--xm-ink-strong);
+  font-weight: 600;
+  background: linear-gradient(160deg, #fffdf4, #ffe9a8);
+  box-shadow: inset 0 0 0 1px rgba(150, 116, 30, 0.34);
+}
+.xm-filters__toggle[data-count]::after {
+  content: attr(data-count);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  margin-left: 1px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: linear-gradient(160deg, #f3b445, #d9912b);
+  color: #3a2506;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 14px;
+}
+.xm-filters__body {
+  display: flex;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 9px;
+  max-height: 0;
+  margin-top: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    max-height var(--xm-dur-base, 180ms) var(--xm-ease-out, ease),
+    opacity var(--xm-dur-quick, 140ms) var(--xm-ease-out, ease),
+    margin-top var(--xm-dur-base, 180ms) var(--xm-ease-out, ease);
+}
+.xm-filters[data-open="1"] .xm-filters__body {
+  max-height: 132px;
+  margin-top: 6px;
+  opacity: 1;
+}
+/* 收起时「重置筛选」仍留在开关行右侧，保证筛选状态一直看得见、随手可清 */
+.xm-filters[data-open="0"] .xm-filters__clear {
+  margin-left: auto;
+}
