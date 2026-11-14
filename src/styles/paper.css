@@ -3736,11 +3736,20 @@ mark.xm-hit {
   flex-wrap: wrap;
   align-items: center;
   gap: 5px 9px;
+  /* 工具条的第一行放按钮 + 筛选开关，芯片行作为整行折到下面（task-53） */
+  flex: 1 0 100%;
+  max-height: 0;
   margin: 0;
   padding: 0 1px 1px;
+  overflow: hidden;
+  opacity: 0;
   font-family: var(--xm-font-ui);
   font-size: 11px;
   color: var(--xm-ink-soft);
+  transition:
+    max-height var(--xm-dur-base, 180ms) var(--xm-ease-out, ease),
+    opacity var(--xm-dur-quick, 140ms) var(--xm-ease-out, ease),
+    margin-top var(--xm-dur-base, 180ms) var(--xm-ease-out, ease);
 }
 /* 一组筛选（时间 / 类型 / 颜色）：组内 4px、组间 9px，
    折行时整组一起走，不会出现"时间组的一半在上一行"这种断法。 */
@@ -3894,7 +3903,7 @@ mark.xm-hit {
 /* ---------- 23.3 清除筛选 ---------- */
 .xm-filters__clear {
   flex: 0 0 auto;
-  margin-left: auto;
+  margin-left: 0;
   height: 21px;
   padding: 0 5px;
   border: 0;
@@ -3903,8 +3912,11 @@ mark.xm-hit {
   font-family: var(--xm-font-ui);
   font-size: 11px;
   line-height: 21px;
-  color: var(--xm-ink-soft);
+  /* 只是一个"退路"按钮，不该比筛选开关更显眼：墨色压到 58%，下划线只留一点灰 */
+  /* 默认连下划线都不画：它只是筛选区里的退路，hover 时才浮出来 */
+  color: color-mix(in srgb, var(--xm-ink) 36%, transparent);
   text-decoration: underline;
+  text-decoration-color: transparent;
   text-underline-offset: 2px;
   cursor: pointer;
   transition:
@@ -3914,13 +3926,14 @@ mark.xm-hit {
 .xm-filters__clear:hover {
   background: rgba(255, 255, 255, 0.5);
   color: var(--xm-ink);
+  text-decoration-color: currentColor;
 }
 .xm-filters__clear:focus-visible {
   outline: 2px solid var(--xm-accent);
   outline-offset: 1px;
 }
 /* 没有筛选时「清除」不该抢注意力：还在原位（不跳动），只是淡到几乎看不见 */
-.xm-filters[data-on="0"] .xm-filters__clear {
+.xm-panel__actions[data-on="0"] .xm-filters__clear {
   opacity: 0.36;
   pointer-events: none;
   text-decoration-color: transparent;
@@ -4696,6 +4709,13 @@ mark.xm-hit {
     inset 0 0 0 1px rgba(240, 190, 120, 0.42),
     0 1px 2px rgba(0, 0, 0, 0.45);
 }
+/* 筛选开关不是 data-active 的 chip，而是靠工具条 data-on 点亮的；
+   日间是米白底，夜里必须换成"深底琥珀小纸片"，否则浅字压浅底直接看不见。 */
+[data-theme="night"] .xm-panel__actions[data-on="1"] .xm-filters__toggle {
+  color: var(--xm-ink-strong);
+  background: linear-gradient(160deg, rgba(224, 161, 60, 0.26), rgba(224, 161, 60, 0.15));
+  box-shadow: inset 0 0 0 1px rgba(240, 190, 120, 0.34);
+}
 [data-theme="night"] .xm-chip__badge {
   background: rgba(224, 161, 60, 0.36);
   color: #ffe9b8;
@@ -4705,7 +4725,9 @@ mark.xm-hit {
   color: #ffd7cc;
 }
 [data-theme="night"] .xm-filters__clear {
-  color: var(--xm-ink-soft);
+  /* 夜间同样按 --xm-ink 派生，不写死浅色，否则会比工具条亮一截 */
+  color: color-mix(in srgb, var(--xm-ink) 34%, transparent);
+  text-decoration-color: transparent;
 }
 
 /* 拖拽中被拿起的那一行：日间是半透明白纸，夜里会亮成一格格灯 */
@@ -4811,6 +4833,8 @@ mark.xm-hit {
   max-height: 84px;
   margin-top: 7px;
   opacity: 1;
+  /* 展开后允许角标溢出：回收站按钮的数字角标 top:-3px，会被 overflow:hidden 削掉上半截 */
+  overflow: visible;
 }
 .xm-more {
   gap: 4px;
@@ -4828,27 +4852,33 @@ mark.xm-hit {
 /* 「筛选」开关：把三组芯片收进一行开关后面，选中数量做成小角标 */
 .xm-filters__bar {
   display: flex;
-  flex: 1 0 100%;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
+  /* 推到工具条第一行的最右，和「更多」同一行（task-53） */
+  margin-left: auto;
 }
 .xm-filters__toggle {
   gap: 3px;
-  padding: 0 8px;
+  height: 26px;
+  padding: 0 9px;
+  font-size: 11.5px;
+  line-height: 26px;
 }
 .xm-filters__toggle svg {
   width: 12px;
   height: 12px;
   transition: transform var(--xm-dur-base, 180ms) var(--xm-ease-out, ease);
 }
-.xm-filters[data-open="1"] .xm-filters__toggle svg {
+.xm-panel__actions[data-open="1"] .xm-filters__toggle svg {
   transform: rotate(180deg);
 }
-.xm-filters[data-on="1"] .xm-filters__toggle {
+.xm-panel__actions[data-on="1"] .xm-filters__toggle {
+  /* 只做"被涂过一层淡琥珀"的提示，不用整块米白：在工具条右边会亮得跳出画面 */
   color: var(--xm-ink-strong);
   font-weight: 600;
-  background: linear-gradient(160deg, #fffdf4, #ffe9a8);
-  box-shadow: inset 0 0 0 1px rgba(150, 116, 30, 0.34);
+  background: linear-gradient(160deg, rgba(217, 145, 43, 0.2), rgba(217, 145, 43, 0.1));
+  box-shadow: inset 0 0 0 1px rgba(150, 116, 30, 0.3);
 }
 .xm-filters__toggle[data-count]::after {
   content: attr(data-count);
@@ -4860,11 +4890,12 @@ mark.xm-hit {
   margin-left: 1px;
   padding: 0 3px;
   border-radius: 7px;
-  background: linear-gradient(160deg, #f3b445, #d9912b);
-  color: #3a2506;
+  background: rgba(217, 145, 43, 0.28);
+  color: var(--xm-ink-strong);
   font-size: 9.5px;
   font-weight: 700;
   line-height: 14px;
+  box-shadow: inset 0 0 0 1px rgba(150, 116, 30, 0.22);
 }
 .xm-filters__body {
   display: flex;
@@ -4872,23 +4903,12 @@ mark.xm-hit {
   flex-wrap: wrap;
   align-items: center;
   gap: 5px 9px;
-  max-height: 0;
-  margin-top: 0;
-  overflow: hidden;
-  opacity: 0;
-  transition:
-    max-height var(--xm-dur-base, 180ms) var(--xm-ease-out, ease),
-    opacity var(--xm-dur-quick, 140ms) var(--xm-ease-out, ease),
-    margin-top var(--xm-dur-base, 180ms) var(--xm-ease-out, ease);
 }
-.xm-filters[data-open="1"] .xm-filters__body {
+/* 展开：整行让出高度，芯片从开关下面滑出来 */
+.xm-panel__actions[data-open="1"] .xm-filters {
   max-height: 132px;
-  margin-top: 6px;
+  margin-top: 7px;
   opacity: 1;
-}
-/* 收起时「重置筛选」仍留在开关行右侧，保证筛选状态一直看得见、随手可清 */
-.xm-filters[data-open="0"] .xm-filters__clear {
-  margin-left: auto;
 }
 
 /* ==========================================================================

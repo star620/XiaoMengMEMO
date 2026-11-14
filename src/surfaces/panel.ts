@@ -117,12 +117,19 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     '<header class="xm-panel__head">' +
     '<input class="xm-search" type="search" placeholder="搜索便签… 支持拼音首字母" title="Ctrl + F" aria-label="搜索便签，支持拼音首字母" />' +
     "</header>" +
-    '<div class="xm-panel__actions" data-more="0">' +
+    '<div class="xm-panel__actions" data-more="0" data-open="0" data-on="0">' +
     '<button class="xm-btn xm-btn--primary" type="button" data-act="new-memo">' + icons.plus + " 备忘</button>" +
     '<button class="xm-btn xm-btn--primary" type="button" data-act="new-todo">' + icons.plus + " 待办</button>" +
     // 「更多」：次要动作收进第二行，默认收起（task-50），点一下展开；收起时把回收站条数挪到这颗按钮上
     '<button class="xm-btn xm-btn--ghost xm-more" type="button" data-act="more" aria-expanded="false" aria-controls="xm-panel-more" title="更多操作">' +
     icons.more + '<span class="xm-more__text">更多</span></button>' +
+    // 「筛选」开关挪到第一行最右（task-53）：和「更多」同一行右对齐，不再单独占一行显得突兀
+    '<div class="xm-filters__bar">' +
+    // 只有 due/kind/color 真的在筛选时才出现（task-48：文案从「清除」改成「重置筛选」，只清筛选、不动搜索框）
+    '<button class="xm-filters__clear" type="button" data-act="filters-clear" hidden>重置筛选</button>' +
+    '<button class="xm-chip xm-filters__toggle" type="button" data-act="filters-toggle" aria-expanded="false" aria-controls="xm-panel-filters" title="展开筛选">' +
+    icons.expand + '<span class="xm-filters__toggle-text">筛选</span></button>' +
+    "</div>" +
     '<div class="xm-panel__more" id="xm-panel-more" inert>' +
     '<button class="xm-btn" type="button" data-act="new-vault" title="新建随身笔记（名字 + 内容，点一下复制）">' +
     icons.plus + " 随身笔记</button>" +
@@ -133,14 +140,7 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     '<button class="xm-btn xm-btn--icon" type="button" data-act="trash" title="回收站" aria-label="回收站">' + icons.trash + "</button>" +
     '<button class="xm-btn xm-btn--icon" type="button" data-act="settings" title="设置" aria-label="设置">' + icons.gear + "</button>" +
     "</div>" +
-    "</div>" +
-    '<div class="xm-filters" data-on="0" data-open="0" role="group" aria-label="筛选便签">' +
-    '<div class="xm-filters__bar">' +
-    '<button class="xm-chip xm-filters__toggle" type="button" data-act="filters-toggle" aria-expanded="false" title="展开筛选">' +
-    icons.expand + '<span class="xm-filters__toggle-text">筛选</span></button>' +
-    // 只有 due/kind/color 真的在筛选时才出现（task-48：文案从「清除」改成「重置筛选」，只清筛选、不动搜索框）
-    '<button class="xm-filters__clear" type="button" data-act="filters-clear" hidden>重置筛选</button>' +
-    "</div>" +
+    '<div class="xm-filters" id="xm-panel-filters" role="group" aria-label="筛选便签">' +
     '<div class="xm-filters__body" inert>' +
     '<div class="xm-filters__group" data-group="due" role="group" aria-label="按时间筛选">' +
     '<button class="xm-chip" type="button" data-due="all" data-active="1">全部</button>' +
@@ -157,6 +157,7 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
     '<div class="xm-filters__group" data-group="color" role="group" aria-label="按颜色筛选">' +
     '<button class="xm-chip xm-chip--dot" type="button" data-color="all" data-active="1" title="全部颜色" aria-label="全部颜色"><i class="xm-chip__dot"></i>全色</button>' +
     NOTE_COLORS.map((color) => '<button class="xm-chip xm-chip--dot" type="button" data-color="' + color.key + '" data-active="0" title="' + color.label + '" aria-label="' + color.label + '"><i class="xm-chip__dot"></i></button>').join("") +
+    "</div>" +
     "</div>" +
     "</div>" +
     "</div>" +
@@ -261,8 +262,9 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   const toastEl = body.querySelector<HTMLElement>(".xm-toast")!;
   // 多选 / 批量条 / 右键菜单 / 提醒弹层（task-48）
   const selectBtn = body.querySelector<HTMLButtonElement>('[data-act="select"]')!;
-  const filtersClearBtn = filtersEl.querySelector<HTMLButtonElement>('[data-act="filters-clear"]')!;
-  const filtersToggleBtn = filtersEl.querySelector<HTMLButtonElement>('[data-act="filters-toggle"]')!;
+  // 筛选开关现在挂在工具条第一行最右（task-53），所以从 actionsEl 里找，不再从 filtersEl 找
+  const filtersClearBtn = actionsEl.querySelector<HTMLButtonElement>('[data-act="filters-clear"]')!;
+  const filtersToggleBtn = actionsEl.querySelector<HTMLButtonElement>('[data-act="filters-toggle"]')!;
   const filtersBody = filtersEl.querySelector<HTMLElement>(".xm-filters__body")!;
   const selbarEl = body.querySelector<HTMLElement>(".xm-selbar")!;
   const selCountEl = selbarEl.querySelector<HTMLElement>(".xm-selbar__count")!;
@@ -659,7 +661,8 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   }
 
   function setFiltersOpen(open: boolean, remember = true): void {
-    filtersEl.dataset.open = open ? "1" : "0";
+    // 展开状态挂在工具条容器上：开关在第一行，芯片行在它下面，两者共用一个状态
+    actionsEl.dataset.open = open ? "1" : "0";
     filtersToggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
     filtersToggleBtn.title = open ? "收起筛选" : "展开筛选";
     if (open) filtersBody.removeAttribute("inert");
@@ -696,7 +699,7 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
 
   /** 筛选条的高亮和计数：计数会跟着搜索词、类型、颜色一起变，切到别处则整条隐藏 */
   function syncFilterBar(): void {
-    filtersEl.dataset.on = filtersActive() ? "1" : "0";
+    actionsEl.dataset.on = filtersActive() ? "1" : "0";
     // 「筛选」开关上的角标 = 启用了几项筛选，收起时也能一眼看出自己筛过东西
     const activeFilters =
       (filterDue === "all" ? 0 : 1) + (filterKind === "all" ? 0 : 1) + (filterColor === "all" ? 0 : 1);
@@ -2464,12 +2467,8 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   filtersEl.addEventListener("click", (event) => {
     if (mode !== "list") return;
     const target = event.target as HTMLElement;
-    if (target.closest('[data-act="filters-toggle"]')) {
-      setFiltersOpen(filtersEl.dataset.open !== "1");
-      return;
-    }
     // 收起状态下动筛选：先展开，否则改完看不见自己选了哪一项
-    if (target.closest("[data-due], [data-kind], [data-color]") && filtersEl.dataset.open !== "1") {
+    if (target.closest("[data-due], [data-kind], [data-color]") && actionsEl.dataset.open !== "1") {
       setFiltersOpen(true, false);
     }
     if (target.closest('[data-act="filters-clear"]')) {
@@ -2496,6 +2495,10 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   });
 
   moreBtn.addEventListener("click", () => setMoreOpen(actionsEl.dataset.more !== "1"));
+  // 筛选开关挪进工具条第一行后不在 filtersEl 里了，单独挂监听（task-53）
+  filtersToggleBtn.addEventListener("click", () => setFiltersOpen(actionsEl.dataset.open !== "1"));
+  // 「重置筛选」也跟着开关搬到了第一行，同样要单独挂；空列表里的「清除筛选」仍走列表委托
+  filtersClearBtn.addEventListener("click", () => clearFilters());
   memoBtn.addEventListener("click", () => void createNote("memo"));
   clipboardBtn.addEventListener("click", () => void createFromClipboard());
   todoBtn.addEventListener("click", () => void createNote("todo"));

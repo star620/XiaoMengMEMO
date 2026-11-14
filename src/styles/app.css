@@ -374,7 +374,7 @@ textarea,
    显隐全部由 JS 写的数据属性驱动（列表 .xm-panel__list[data-multi]、
    卡片 .xm-card[data-pick]），这里只画状态，不藏逻辑。
    ========================================================================== */
-/* [hidden] 兜底：paper.css 里 .xm-filters[data-on="0"] .xm-filters__clear 是
+/* [hidden] 兜底：paper.css 里 .xm-panel__actions[data-on="0"] .xm-filters__clear 是
    "淡显但不隐藏"，.xm-pop__item 又是 display:block，不写 !important 收不起来 */
 .xm-filters__clear[hidden],
 .xm-selbar[hidden],
