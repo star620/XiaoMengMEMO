@@ -10,6 +10,8 @@ import { query } from "../shared/dom";
 import { subscribe } from "../shared/events";
 import { clockTime, reminderLabel, repeatLabel } from "../shared/format";
 import { vaultSummary } from "../shared/vault";
+import { replaceImageLines } from "../shared/images";
+import { mdToPlain } from "../shared/markdown";
 import { closeCurrent } from "../shared/window";
 import type { Note } from "../shared/types";
 
@@ -74,7 +76,11 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
       const words = rest.map((todo) => todo.text.trim() || "（没写内容）").join(" · ");
       return "还剩 " + rest.length + " 项：" + words;
     }
-    const text = target.content.replace(/\s+/g, " ").trim();
+    // 提醒窗只有一行摘要：图片行先变成 [图片]，再去掉 Markdown 记号，
+    // 否则用户会看到 ![](xmimg:img_xxx.png "说明") 这种源码。
+    const text = mdToPlain(replaceImageLines(target.content, "[图片]"))
+      .replace(/\s+/g, " ")
+      .trim();
     if (!text) return "（空便签）";
     return text.length > SUMMARY_LIMIT ? text.slice(0, SUMMARY_LIMIT) + "…" : text;
   }
@@ -92,7 +98,11 @@ export async function mount(root: HTMLElement, ctx: { noteId: string }): Promise
     const when = target.reminder_at ? reminderLabel(target.reminder_at) : clockTime(Date.now());
     const repeat = target.repeat ? repeatLabel(target.repeat) : "";
     timeEl.textContent = repeat ? when + " · " + repeat : when;
-    const firstLine = target.content.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
+    const firstLine =
+      mdToPlain(replaceImageLines(target.content, "[图片]"))
+        .split("\n")
+        .map((line) => line.trim())
+        .find(Boolean) ?? "";
     const firstLabel = (target.items ?? []).find((item) => item.label.trim())?.label.trim() ?? "";
     const fallback = target.kind === "todo" ? "待办提醒" : target.kind === "vault" ? "随身笔记提醒" : "便签提醒";
     titleEl.textContent =

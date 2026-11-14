@@ -14,8 +14,8 @@ import { hideCurrent } from "../shared/window";
 import { applyTheme } from "../shared/theme";
 import type { Settings } from "../shared/types";
 
-/** 版本号：与 package.json 保持一致 */
-const APP_VERSION = "0.2.2";
+/** 版本号由 vite.config.ts 从 package.json 注入，避免两处手改不同步 */
+const APP_VERSION = __APP_VERSION__;
 
 
 export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promise<void> {
