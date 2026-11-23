@@ -1615,6 +1615,22 @@
   letter-spacing: 0.2px;
   color: var(--xm-ink-strong);
 }
+/* 「已收起」小标：只表示窗口收起来了，不是删除。
+   用虚线感的浅框，比类型角标更弱，避免和「备忘/待办」抢注意力。 */
+.xm-card__closed {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 9px;
+  font-family: var(--xm-font-ui);
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  color: var(--xm-ink-meta);
+  background: rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(120, 100, 60, 0.24);
+  white-space: nowrap;
+}
 /* 角标：按 data-kind 分色——备忘=琥珀、待办=墨绿。
    两种都是"纸上的小标签"：淡底 + 深字，克制不抢标题。 */
 .xm-card__badge {

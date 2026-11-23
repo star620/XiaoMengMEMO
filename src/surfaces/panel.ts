@@ -1415,9 +1415,13 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
       showToast("已恢复到 " + relativeTime(ts) + "的版本", 2800);
       closeVersionDetail();
       const snapshot = await api.getSnapshot();
-      notes = snapshot.notes
-        .filter((note) => !note.hidden)
-        .map((note) => ({ ...note, items: note.items ?? [], reveal: !!note.reveal }));
+      // 窗口关掉只代表「这张纸先收起来」，便签本身还在 notes.json 里；
+      // 面板必须继续列出来，否则用户会以为它被删了（回收站当然也找不到）。
+      notes = snapshot.notes.map((note) => ({
+        ...note,
+        items: note.items ?? [],
+        reveal: !!note.reveal,
+      }));
       updateTrashBadge();
       const target = notes.find((note) => note.id === restored.id);
       if (target) {
@@ -1469,6 +1473,16 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
       remind.className = "xm-card__remind";
       remind.textContent = view.reminder;
       head.appendChild(remind);
+    }
+
+    // 窗口已关的便签：明确标出来，避免用户以为内容没了
+    if (view.note.hidden) {
+      const closed = document.createElement("span");
+      closed.className = "xm-card__closed";
+      closed.textContent = "已收起";
+      closed.title = "窗口已收起，内容还在；点开这张卡就会重新显示";
+      head.appendChild(closed);
+      card.title = "窗口已收起，内容还在；点开就会重新显示";
     }
 
     const badge = document.createElement("span");
@@ -2011,9 +2025,12 @@ export async function mount(root: HTMLElement, _ctx: { noteId: string }): Promis
   // ---------- 操作 ----------
   async function loadAll(): Promise<void> {
     const [snapshot, trash] = await Promise.all([api.getSnapshot(), api.listTrash()]);
-    notes = snapshot.notes
-      .filter((n) => !n.hidden)
-      .map((note) => ({ ...note, items: note.items ?? [], reveal: !!note.reveal }));
+    // 别按 hidden 过滤：hidden 只表示「窗口收起来了」，不是删除。
+    notes = snapshot.notes.map((note) => ({
+      ...note,
+      items: note.items ?? [],
+      reveal: !!note.reveal,
+    }));
     trashItems = trash;
     updateTrashBadge();
     // 修改记录开着时，标题可能因为别处改名而变；同步一下小字

@@ -343,6 +343,13 @@ pub fn run() {
                     Ok(_) => visible_windows += 1,
                     Err(err) => log_line(format!("打开管理面板失败：{err}")),
                 }
+            } else if visible_windows == 0 {
+                // 便签都还在，只是窗口全被收起来了（hidden）：打开面板让用户能点回来。
+                // 不加这一支会出现两个问题：屏幕上什么都没有，以及被误判成“启动失败”。
+                match windows::open_panel(&handle) {
+                    Ok(_) => visible_windows += 1,
+                    Err(err) => log_line(format!("打开管理面板失败：{err}")),
+                }
             }
 
             // 一个窗口都没起来 = 用户屏幕上什么都没有，只能弹消息框（日志、数据目录一起给）
